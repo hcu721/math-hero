@@ -1,0 +1,15 @@
+# ─────────────────────────────────────────────────────────────
+# PRIVACY: a free GitHub account can only host Pages from a PUBLIC
+# repo, so anything committed here is world-readable. Keep the
+# internal planning + AI-assistant context OUT of the published repo
+# — it contains personal details we don't want public.
+#   To intentionally publish one of these, delete its line below.
+# ─────────────────────────────────────────────────────────────
+.claude/
+CLAUDE.md
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

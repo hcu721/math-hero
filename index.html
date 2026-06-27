@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit + maximum-scale keeps the layout stable on iPhone/iPad Safari -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <title>Math Hero</title>
+  <meta name="description" content="Math Hero — a friendly daily math game that teaches addition as visible patterns." />
+
+  <!-- PWA: installable, offline, full-screen on the home screen -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0e1430" />
+
+  <!-- iOS Safari ignores parts of the manifest, so it needs these too:
+       standalone full-screen mode, a translucent status bar so our
+       safe-area padding shows, the home-screen title, and a PNG icon
+       (iOS does NOT use the manifest icons for Add to Home Screen). -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Math Hero" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />            <!-- 180, iPhone default -->
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/apple-touch-icon-152.png" /> <!-- iPad -->
+  <link rel="apple-touch-icon" sizes="167x167" href="icons/apple-touch-icon-167.png" /> <!-- iPad Pro -->
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" /> <!-- browser tab -->
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!--
+    The whole app is ONE page. We show/hide three "screens" by toggling the
+    .is-active class. app.js drives which screen is visible.
+  -->
+  <main id="app">
+
+    <!-- ============ HOME SCREEN ============ -->
+    <section class="screen is-active" data-screen="home">
+      <h1 class="logo">⭐ Math Hero</h1>
+
+      <div class="home-card">
+        <p class="home-label">Today's mission</p>
+        <p class="skill-name" id="home-skill">Plus 10</p>
+      </div>
+
+      <div class="streak" id="home-streak">🔥 Streak: 0 days</div>
+
+      <button class="btn btn-big btn-go" id="start-btn">Start ▶</button>
+    </section>
+
+    <!-- ============ PLAY SCREEN ============ -->
+    <section class="screen" data-screen="play">
+      <!-- progress dots: one per problem in the session -->
+      <div class="dots" id="dots" aria-label="Session progress"></div>
+
+      <!-- the question, e.g. "23 + 10 = ?" -->
+      <p class="prompt" id="prompt">23 + 10 = ?</p>
+
+      <!-- the 50-chart / number visual gets drawn in here by visuals.js -->
+      <div class="visual" id="visual" aria-hidden="true"></div>
+
+      <!-- three big answer choices get inserted here by app.js -->
+      <div class="choices" id="choices"></div>
+
+      <!-- gentle feedback line ("Nice!" / "Let's look at the chart") -->
+      <p class="feedback" id="feedback"></p>
+
+      <div class="play-tools">
+        <button class="btn btn-hint" id="hint-btn">👀 Show me</button>
+        <button class="btn btn-ghost" id="replay-btn" title="Hear it again">🔊</button>
+      </div>
+    </section>
+
+    <!-- ============ REWARD SCREEN ============ -->
+    <section class="screen" data-screen="reward">
+      <div class="confetti" id="confetti" aria-hidden="true"></div>
+      <h2 class="reward-title" id="reward-title">You did it! 🎉</h2>
+      <p class="stars" id="reward-stars">⭐⭐⭐⭐⭐</p>
+      <p class="reward-line" id="reward-speed"></p>
+      <button class="btn btn-big btn-go" id="home-btn">Back home 🏠</button>
+    </section>
+
+  </main>
+
+  <!-- type="module" lets us split the code into clean files that import each other -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

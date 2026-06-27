@@ -1,0 +1,220 @@
+/* ============================================================
+   Math Hero — styles.css
+   Design goals (from the PRD): big touch targets (Apple HIG ≥44pt,
+   we go bigger for a kid), high contrast, low clutter, iPad-first
+   but responsive down to iPhone. All animation is gated behind a
+   motion flag so reduce-motion is honoured, not just exposed.
+   ============================================================ */
+
+/* ---- Design tokens: change a color here, it changes everywhere ---- */
+:root {
+  --bg:        #0e1430;   /* deep night-sky blue */
+  --bg-card:   #1b244d;
+  --ink:       #f4f7ff;   /* near-white text */
+  --ink-dim:   #9fb0d8;
+  --accent:    #ffcc33;   /* star yellow */
+  --go:        #36c98b;   /* friendly green "go" */
+  --go-press:  #2aa873;
+  --wrong:     #ff7a8a;   /* gentle, not alarming, red */
+  --choice:    #2b3a6b;   /* answer-button base */
+  --choice-bg: #27325f;
+  --choice-hi: #3a4d8a;   /* highlighted cell / pressed state */
+  --radius:    20px;
+  --tap:       72px;      /* minimum tap height for a 9-year-old */
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* keep content clear of the iPhone notch / home indicator */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+
+#app { height: 100%; }
+
+/* ---- Screen system: only .is-active is shown ---- */
+.screen { display: none; }
+.screen.is-active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3.5vh, 32px);
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+}
+
+/* ============ HOME ============ */
+.logo {
+  font-size: clamp(2.2rem, 7vw, 3.4rem);
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.home-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: clamp(20px, 4vw, 32px);
+  width: min(480px, 90vw);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.home-label { margin: 0 0 6px; color: var(--ink-dim); font-size: 1rem; }
+.skill-name { margin: 0; font-size: clamp(1.8rem, 6vw, 2.6rem); font-weight: 800; color: var(--accent); }
+.session-badge { margin: 14px 0 0; font-size: 1.1rem; color: var(--ink-dim); }
+
+.streak { font-size: 1.2rem; }
+
+/* ============ BUTTONS ============ */
+.btn {
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--choice);
+  border: none;
+  border-radius: var(--radius);
+  min-height: var(--tap);
+  padding: 0 28px;
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
+}
+.btn:active { transform: scale(0.96); }
+
+.btn-big { font-size: clamp(1.4rem, 5vw, 2rem); padding: 18px 44px; width: min(360px, 80vw); }
+
+.btn-go { background: var(--go); }
+.btn-go:active { background: var(--go-press); }
+
+.btn-ghost { background: transparent; border: 2px solid var(--choice-hi); }
+.btn-hint  { background: var(--bg-card); border: 2px solid var(--accent); color: var(--accent); }
+
+/* ============ PLAY ============ */
+.dots { display: flex; gap: 12px; }
+.dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--choice); transition: background 200ms ease;
+}
+.dot.done    { background: var(--go); }
+.dot.current { background: var(--accent); }
+
+.prompt {
+  font-size: clamp(2.4rem, 9vw, 4rem);
+  font-weight: 800;
+  margin: 0;
+}
+/* colour the equation to match the dots: yellow = known, green = added.
+   .t-sum = the solved answer, shown green only on a correct answer. */
+.prompt .t-known { color: var(--accent); }
+.prompt .t-add   { color: var(--go); }
+.prompt .t-sum   { color: var(--go); }
+
+.visual {
+  width: min(440px, 92vw);
+  /* the SVG inside scales to this box */
+}
+.visual svg { width: 100%; height: auto; display: block; }
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(10px, 3vw, 18px);
+  width: min(440px, 92vw);
+}
+/* the `hidden` attribute (used to hide answers during the subitize flash) must
+   beat `.choices { display: grid }` — author `display` overrides UA [hidden]. */
+.choices[hidden] { display: none; }
+/* subitize flash: hide the dots/answers but KEEP their box in the layout, so the
+   column doesn't recenter when the answers return (visibility, not display). */
+.flash-hide { visibility: hidden; }
+.choice {
+  font-size: clamp(1.8rem, 7vw, 2.6rem);
+  font-weight: 800;
+  background: var(--choice-bg);
+  min-height: clamp(80px, 16vw, 110px);
+  border-radius: var(--radius);
+}
+.choice:disabled { opacity: 0.45; cursor: default; }
+.choice.is-wrong { background: var(--wrong); }
+.choice.is-right { background: var(--go); }
+
+.feedback { min-height: 1.6em; font-size: 1.3rem; margin: 0; }
+.feedback.good { color: var(--go); }
+.feedback.soft { color: var(--accent); }
+
+.play-tools { display: flex; gap: 14px; }
+
+/* ============ REWARD ============ */
+.reward-title { font-size: clamp(2rem, 8vw, 3rem); margin: 0; }
+.stars { font-size: clamp(2.2rem, 9vw, 3.4rem); margin: 0; letter-spacing: 6px; }
+.reward-line { font-size: 1.3rem; color: var(--ink-dim); margin: 0; }
+
+/* confetti pieces are injected by app.js as spans */
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.confetti span {
+  position: absolute; top: -10%;
+  font-size: 1.6rem;
+  animation: fall 1600ms linear forwards;
+}
+@keyframes fall {
+  to { transform: translateY(120vh) rotate(360deg); opacity: 0.9; }
+}
+
+/* SVG highlight pulse used by the +10 reveal — fill-box/center so the cell
+   pops in place (without transform-box an SVG rect scales from the viewport
+   origin and lurches toward the corner). */
+.cell-to.animate { transform-box: fill-box; transform-origin: center; animation: pop 600ms ease; }
+@keyframes pop { 0% { transform: scale(0.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+/* dots that appear on a ten-frame / bridge reveal.
+   `both` holds the 0%-scale (invisible) state during any animation-delay,
+   so a STAGGERED fill pops in one dot at a time instead of all flashing first. */
+.dot-pop { transform-box: fill-box; transform-origin: center; animation: dotpop 320ms ease both; }
+@keyframes dotpop { 0% { transform: scale(0); } 70% { transform: scale(1.2); } 100% { transform: scale(1); } }
+
+/* bridge fill: each tray dot flies along ITS OWN path (--dx/--dy = the tray→cell
+   vector, set per dot) to its cell and stays there. `both` parks every dot at the
+   tray during its delay, so dots not yet launched wait at the bottom. */
+.fly-to {
+  transform-box: fill-box; transform-origin: center;
+  animation: flyto var(--fly-dur, 460ms) cubic-bezier(.3,.72,.2,1) both;
+}
+@keyframes flyto {
+  0%   { transform: translate(0, 0); }
+  100% { transform: translate(var(--dx, 0), var(--dy, 0)); }
+}
+/* prominent comet trail: ghost dots follow the same path, lag behind, blur, fade */
+.fly-trail {
+  transform-box: fill-box; transform-origin: center;
+  animation: flytrail var(--fly-dur, 460ms) cubic-bezier(.3,.72,.2,1) both;
+  filter: blur(2.5px); pointer-events: none;
+}
+@keyframes flytrail {
+  0%   { transform: translate(0, 0); opacity: 0; }
+  18%  { opacity: var(--trail-op, 0.5); }
+  100% { transform: translate(var(--dx, 0), var(--dy, 0)); opacity: 0; }
+}
+
+/* ============================================================
+   MOTION OFF — honour the system setting AND our own .no-motion
+   class (app.js adds it if a future settings toggle is off).
+   This must actually disable animation, per the PRD risk register.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, .confetti span, .cell-to.animate { animation: none !important; transition: none !important; }
+}
+.no-motion *, .no-motion .confetti span, .no-motion .cell-to.animate {
+  animation: none !important; transition: none !important;
+}
