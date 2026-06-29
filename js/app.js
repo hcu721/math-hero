@@ -1013,31 +1013,35 @@ els.playHome.addEventListener("click", () => { speech.stop(); showBoard(); });  
 progress.requestPersistentStorage();
 
 const params = new URLSearchParams(location.search);
-if (params.has("debug")) runSelfTest();                    // self-test is pure; safe on a real device
-// dev: ?season=N jumps to Season N to preview escalated difficulty (escalator + teen ramp)
-const seasonN = +(params.get("season") || 0);
-if (seasonN > 0) progress.devSetCycle(seasonN);
-// dev: ?seed=N pre-clears the first N spine skills (for screenshots of a mid-Season board)
-const seedN = +(params.get("seed") || 0);
-if (seedN > 0) {
-  for (const id of curriculum.SEQUENCE.slice(0, seedN)) {
-    const flags = Array(curriculum.roundLength(id)).fill(1);
-    progress.finishRound({ skillId: id, cleanFlags: flags });
-    progress.finishRound({ skillId: id, cleanFlags: flags });
+// ---- DEV HOOKS — localhost ONLY. INERT on the live deploy, so coins/parts/mastery can't be
+// shortcut and the gate ordering can't be bypassed (Howard iterates in local Chrome). ----
+const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+if (isDev) {
+  if (params.has("debug")) runSelfTest();
+  // ?season=N → preview escalated difficulty (escalator + teen ramp)
+  const seasonN = +(params.get("season") || 0);
+  if (seasonN > 0) progress.devSetCycle(seasonN);
+  // ?seed=N → pre-clear the first N spine skills (mid-Season board screenshots)
+  const seedN = +(params.get("seed") || 0);
+  if (seedN > 0) {
+    for (const id of curriculum.SEQUENCE.slice(0, seedN)) {
+      const flags = Array(curriculum.roundLength(id)).fill(1);
+      progress.finishRound({ skillId: id, cleanFlags: flags });
+      progress.finishRound({ skillId: id, cleanFlags: flags });
+    }
   }
+  // ?parts=N → grant + equip chapter avatar parts 1..N
+  const partsN = +(params.get("parts") || 0);
+  for (let n = 1; n <= partsN; n++) { progress.grantChapterPart(n); equipItem(`chapter-${n}`); }
+  // ?coins=N → grant coins (shop testing)
+  const coinsN = +(params.get("coins") || 0);
+  if (coinsN > 0) progress.addCoins(coinsN);
 }
-// dev: ?parts=N grants chapter avatar parts 1..N, to eyeball the earned hero (clip/cape/
-// crown/wand) without grinding through the chapters first
-const partsN = +(params.get("parts") || 0);
-for (let n = 1; n <= partsN; n++) { progress.grantChapterPart(n); equipItem(`chapter-${n}`); }
-// dev: ?coins=N grants coins (for shop testing without earning them through play)
-const coinsN = +(params.get("coins") || 0);
-if (coinsN > 0) progress.addCoins(coinsN);
-// dev: ?skill=<id> jumps straight into that skill's round (audio unlocks on the first tap)
-// dev: ?design opens the Design Prototype page (every item on the avatar) instead of the board
+
+// open the right screen — ?design / ?skill previews are dev-only too; the live site always boots the board
 const previewId = params.get("skill");
-if (params.has("design")) renderDesignPage();
-else if (previewId && SKILLS[previewId]) startRound(SKILLS[previewId]);
+if (isDev && params.has("design")) renderDesignPage();
+else if (isDev && previewId && SKILLS[previewId]) startRound(SKILLS[previewId]);
 else showBoard();
 
 /* ---- PWA: register the service worker for offline + installability.

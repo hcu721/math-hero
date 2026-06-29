@@ -16,7 +16,7 @@
    keep serving the old build.
    ============================================================ */
 
-const CACHE_VERSION = "v4";   // subtraction + escalator + chapter/World + full dress-up shop drop
+const CACHE_VERSION = "v5";   // dev hooks gated to localhost (inert on the live deploy)
 const CACHE = `mathhero-${CACHE_VERSION}`;
 
 /* Everything the app needs to run from a cold, offline start. Paths are
