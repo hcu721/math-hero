@@ -85,6 +85,12 @@ Wait ~1 minute. The page shows your URL:
 3. Launch from the new **Math Hero** icon — it should open **full-screen**
    (no Safari chrome). The icon should be the gold star.
 
+> **⚠ The Home-Screen install is DATA-CRITICAL, not just cosmetic.** iOS Safari
+> evicts a *tab's* localStorage after ~7 idle days — which would wipe her coins,
+> avatar, and Season progress. The *installed* icon's storage is exempt. So always
+> play from the **icon** (not a Safari tab), and add it to the Home Screen on day one.
+> (The app also calls `navigator.storage.persist()` at startup as extra insurance.)
+
 ## 5. Verify it actually works (the real test)
 On the installed app:
 - [ ] **Speech:** the first problem is *spoken* (tap Start, listen). This

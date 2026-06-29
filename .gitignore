@@ -8,6 +8,9 @@
 .claude/
 CLAUDE.md
 
+# Throwaway prototypes (never deploy)
+avatar-preview.html
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

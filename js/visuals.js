@@ -35,7 +35,9 @@ function el(name, attrs = {}) {
 }
 
 /* Build a fresh 50-chart SVG (all 50 cells, no highlights) and return it. Shared by
-   the +10-family chart skills and `more` (which highlight cells differently). */
+   the +10-family chart skills (plus10/skip10/plus9/addones), which highlight cells
+   differently. (`more` used to share it, but it was stripped of its visual on
+   2026-06-21 — the chart's reading-order position handed the answer for free.) */
 function buildChart50Svg(label) {
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": label });
   for (let num = 1; num <= 50; num++) {

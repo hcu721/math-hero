@@ -16,7 +16,7 @@
    keep serving the old build.
    ============================================================ */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE = `mathhero-${CACHE_VERSION}`;
 
 /* Everything the app needs to run from a cold, offline start. Paths are
@@ -33,7 +33,11 @@ const ASSETS = [
   "./js/speech.js",
   "./js/sfx.js",
   "./js/progress.js",
+  "./js/curriculum.js",
   "./icons/apple-touch-icon.png",
+  "./icons/apple-touch-icon-152.png",
+  "./icons/apple-touch-icon-167.png",
+  "./icons/favicon-32.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];

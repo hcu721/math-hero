@@ -13,14 +13,15 @@
    `mode:'flash'` (subitizing) — it never knows which skill is playing.
    ============================================================ */
 
-import { todaysSkill, runSelfTest, SKILLS } from "./skills.js";
+import { runSelfTest, SKILLS } from "./skills.js";
 import { renderVisual, revealVisual } from "./visuals.js";
 import * as speech from "./speech.js";
 import * as sfx from "./sfx.js";
 import * as progress from "./progress.js";
+import * as curriculum from "./curriculum.js";
 
 /* ---- config ---- */
-const PROBLEMS_PER_SESSION = 5;
+// Round length is PER-SKILL now (curriculum.roundLength → 5/7/10); set on the session at start.
 const PRAISE = ["Nice!", "You got it!", "Yes!", "Smooth!"];   // generic (retry) praise
 // gentle, no-penalty nudges on a wrong tap (shown + spoken; emoji stripped from audio)
 const NUDGE = [
@@ -39,19 +40,24 @@ const reduceMotion =
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 if (reduceMotion) document.body.classList.add("no-motion");
 
-/* ---- which skill? default = +10; ?skill=<id> overrides for preview ---- */
-function pickSkill() {
-  const id = new URLSearchParams(location.search).get("skill");
-  return (id && SKILLS[id]) ? SKILLS[id] : todaysSkill();
-}
+/* ---- local zero-padded day key (NEVER toISOString — UTC flips the "day" mid-
+   afternoon in US zones). Used for the once-per-day daily-return coin. ---- */
+const localDayKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /* ---- DOM handles ---- */
 const $ = (id) => document.getElementById(id);
 const screens = document.querySelectorAll(".screen");
 const els = {
-  homeSkill: $("home-skill"),
-  homeStreak: $("home-streak"),
-  startBtn: $("start-btn"),
+  // board (home)
+  logo: $("logo"),
+  jar: $("jar"),
+  jarFill: $("jar-fill"),
+  coinAmt: $("coin-amt"),
+  seasonLine: $("season-line"),
+  tiles: $("tiles"),
+  avatarBox: $("avatar-box"),
+  // play
   dots: $("dots"),
   prompt: $("prompt"),
   visual: $("visual"),
@@ -59,11 +65,18 @@ const els = {
   feedback: $("feedback"),
   hintBtn: $("hint-btn"),
   replayBtn: $("replay-btn"),
+  // reward
   rewardTitle: $("reward-title"),
   rewardStars: $("reward-stars"),
+  rewardCoins: $("reward-coins"),
   rewardSpeed: $("reward-speed"),
   confetti: $("confetti"),
   homeBtn: $("home-btn"),
+  // hidden parent panel
+  panel: $("parent-panel"),
+  panelRows: $("panel-rows"),
+  panelUnlock: $("panel-unlock"),
+  panelClose: $("panel-close"),
 };
 
 /* A persistent full-screen confetti layer. The markup's #confetti lives
@@ -74,7 +87,7 @@ fxLayer.className = "confetti";
 document.body.append(fxLayer);
 
 /* ---- session state ---- */
-let skill = pickSkill();
+let skill = null;     // set when a tile is tapped (or a ?skill=<id> dev preview)
 let session = null;   // { problems[], index, correctFirstTry, sessionMs, _priorAvg }
 let demoing = false;  // true while the worked-example walkthrough is on screen
 
@@ -82,21 +95,146 @@ function showScreen(name) {
   screens.forEach((s) => s.classList.toggle("is-active", s.dataset.screen === name));
 }
 
-/* ============ HOME ============ */
-function initHome() {
-  skill = pickSkill();
-  els.homeSkill.textContent = skill.label;
-  els.homeStreak.textContent = `🔥 Streak: ${progress.getStreak()} days`;
-  showScreen("home");
+/* ============ BOARD (home) ============ */
+const JAR_GOAL = 120;   // coins to "wake the shop" — a near-term fill-to-goal target (cosmetic, Phase A)
+
+function showBoard() { renderBoard(); showScreen("board"); }
+
+/* Draw the bounded picker from curriculum.board(): mastered chips → the 2 live
+   tiles → the single next-up padlock → a quiet pip row for the far-locked rest
+   (NOT a wall of 13 padlocks). */
+function renderBoard() {
+  const cells = curriculum.board();                         // [{id,label,len,level,state}]
+  const live = cells.filter((c) => c.state === "live");
+  const mastered = cells.filter((c) => c.state === "mastered");
+  const locked = cells.filter((c) => c.state === "locked");
+  const nextUp = locked[0] || null;
+  const farLocked = locked.slice(1);
+
+  els.seasonLine.textContent =
+    `Season ${progress.getCycle()} · ${mastered.length} of ${cells.length} unlocked`;
+
+  els.tiles.innerHTML = "";
+  if (mastered.length) { const r = rowEl(); mastered.forEach((c) => r.append(tileEl(c, "🏆"))); els.tiles.append(r); }
+  if (live.length)     { const r = rowEl(); live.forEach((c) => r.append(tileEl(c, "⭐")));     els.tiles.append(r); }
+  if (nextUp)          { const r = rowEl(); r.append(tileEl({ ...nextUp, state: "next" }, "🔒")); els.tiles.append(r); }
+  if (farLocked.length) {
+    const pips = document.createElement("div");
+    pips.className = "locked-pips";
+    farLocked.forEach(() => { const d = document.createElement("span"); d.className = "lp"; pips.append(d); });
+    els.tiles.append(pips);
+  }
+
+  renderJar();
+  renderAvatar();
 }
 
-function startSession() {
+function rowEl() { const r = document.createElement("div"); r.className = "tile-row"; return r; }
+
+function tileEl(c, glyph) {
+  const t = document.createElement("button");
+  t.className = `tile ${c.state}`;
+  const tappable = c.state === "live" || c.state === "mastered";
+  t.disabled = !tappable;
+  const levels = (c.state === "live" || c.state === "mastered")
+    ? `<span class="levels">${["E", "M", "H"].map((L) => `<span class="lvl ${L === c.level ? "on" : ""}">${L}</span>`).join("")}</span>`
+    : "";
+  t.innerHTML =
+    `<span class="tile-name">${glyph} ${c.label}</span>` +
+    (c.state === "live" ? `<span class="tile-sub">${c.len} questions</span>` : "") +
+    levels;
+  if (tappable) t.addEventListener("click", () => startRound(SKILLS[c.id]));
+  return t;
+}
+
+function renderJar() {
+  const coins = progress.getCoins();
+  els.coinAmt.textContent = coins;
+  els.jarFill.style.width = Math.min(100, Math.round((coins / JAR_GOAL) * 100)) + "%";
+}
+
+/* The BLAND starter avatar (Phase A: free defaults only; the part-swap shop is Phase B).
+   Drawn back→front: back-hair, legs, shorts, feet, torso, arms+hands, top, head, face, bangs. */
+function renderAvatar() {
+  const sk = "#f4c89a", hair = "#6b4226", gray = "#d2d2da", gray2 = "#c4c4cc";
+  els.avatarBox.innerHTML = `
+    <svg viewBox="0 0 240 300" xmlns="http://www.w3.org/2000/svg">
+      <path d="M60 102 Q58 182 92 198 L148 198 Q182 182 180 102 Q180 46 120 46 Q60 46 60 102 Z" fill="${hair}"/>
+      <rect x="100" y="226" width="18" height="64" rx="9" fill="${sk}"/>
+      <rect x="122" y="226" width="18" height="64" rx="9" fill="${sk}"/>
+      <rect x="98" y="224" width="20" height="34" rx="6" fill="${gray2}"/>
+      <rect x="122" y="224" width="20" height="34" rx="6" fill="${gray2}"/>
+      <ellipse cx="106" cy="292" rx="12" ry="8" fill="${sk}"/>
+      <ellipse cx="134" cy="292" rx="12" ry="8" fill="${sk}"/>
+      <path d="M86 158 Q120 148 154 158 L150 232 Q120 244 90 232 Z" fill="${sk}"/>
+      <rect x="60" y="162" width="16" height="66" rx="8" fill="${sk}" transform="rotate(9 68 195)"/>
+      <rect x="164" y="162" width="16" height="66" rx="8" fill="${sk}" transform="rotate(-9 172 195)"/>
+      <circle cx="62" cy="228" r="10" fill="${sk}"/>
+      <circle cx="178" cy="228" r="10" fill="${sk}"/>
+      <path d="M90 160 Q120 153 150 160 L148 228 Q120 238 92 228 Z" fill="${gray}"/>
+      <circle cx="86" cy="170" r="11" fill="${gray}"/>
+      <circle cx="154" cy="170" r="11" fill="${gray}"/>
+      <rect x="110" y="146" width="20" height="16" fill="${sk}"/>
+      <circle cx="64" cy="104" r="10" fill="${sk}"/>
+      <circle cx="176" cy="104" r="10" fill="${sk}"/>
+      <circle cx="120" cy="102" r="54" fill="${sk}"/>
+      <ellipse cx="101" cy="107" rx="9" ry="11" fill="#fff"/><ellipse cx="139" cy="107" rx="9" ry="11" fill="#fff"/>
+      <circle cx="101" cy="109" r="5.5" fill="#3a2e3f"/><circle cx="139" cy="109" r="5.5" fill="#3a2e3f"/>
+      <path d="M111 125 Q120 132 129 125" fill="none" stroke="#b5557a" stroke-width="3" stroke-linecap="round"/>
+      <path d="M68 102 Q66 50 120 49 Q174 50 172 102 Q150 74 120 78 Q90 74 68 102 Z" fill="${hair}"/>
+    </svg>`;
+}
+
+/* ---- hidden parent report: long-press the logo ~2s (no address bar in the
+   installed PWA, so she can't stumble in). pointer-based, cancels on a 10px drag. ---- */
+function bindLongPress(el, ms, fn) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener("pointerdown", (e) => { sx = e.clientX; sy = e.clientY; cancel(); timer = setTimeout(fn, ms); });
+  el.addEventListener("pointermove", (e) => { if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel(); });
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointercancel", cancel);
+  el.addEventListener("pointerleave", cancel);
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+function openPanel() {
+  const cells = curriculum.board();
+  els.panelRows.innerHTML = cells.map((c) => {
+    const st = progress.getSkill(c.id);
+    const acc = st.attempts ? Math.round((st.firstTry / st.attempts) * 100) : 0;
+    const badge = c.state === "mastered" ? "🏆" : c.state === "live" ? "⭐" : "🔒";
+    return `<div class="panel-row"><span class="pr-skill">${badge} ${c.label}</span>` +
+           `<span class="pr-stat">${acc}% &middot; ${st.firstTry}/${st.attempts}</span></div>`;
+  }).join("");
+  els.panel.hidden = false;
+}
+function closePanel() { els.panel.hidden = true; }
+function parentUnlock() {
+  const live = curriculum.liveIds();
+  if (live.length) { progress.forceClearThisCycle(live[0]); curriculum.advanceIfComplete(); }
+  closePanel();
+  renderBoard();
+}
+
+function startRound(s) {
+  skill = s;
   // iOS: unlock speech AND audio INSIDE this tap, or the first cues are silent.
   speech.unlock();
   sfx.unlock();
 
-  const problems = Array.from({ length: PROBLEMS_PER_SESSION }, () => skill.generate());
-  session = { problems, index: 0, correctFirstTry: 0, sessionMs: 0 };
+  const len = curriculum.roundLength(skill.id);     // per-skill round length (5 / 7 / 10)
+  const cycle = progress.getCycle();
+  // generate(cycle) is the E/M/H ESCALATOR HOOK — generators ignore the arg today, so
+  // passing it is harmless now and avoids a retrofit when difficulty scaling lands.
+  const problems = Array.from({ length: len }, () => skill.generate(cycle));
+  const hist = progress.getAll().times[skill.id] || [];
+  session = {
+    problems, len, index: 0, correctFirstTry: 0, sessionMs: 0,
+    cleanFlags: [], roundId: `${skill.id}:${now()}`, _committed: false,
+    // capture the kid's PRIOR rolling average BEFORE this round folds in
+    _priorAvg: hist.length ? hist.reduce((a, b) => a + b, 0) / hist.length : null,
+  };
 
   buildDots();
   showScreen("play");
@@ -135,7 +273,7 @@ function runDemo(done) {
 /* ============ PLAY ============ */
 function buildDots() {
   els.dots.innerHTML = "";
-  for (let i = 0; i < PROBLEMS_PER_SESSION; i++) {
+  for (let i = 0; i < session.len; i++) {
     const d = document.createElement("span");
     d.className = "dot";
     els.dots.append(d);
@@ -166,6 +304,10 @@ function renderProblem() {
   showVisual();             // clear any leftover flash-hide (subitize dots / addfacts equation)
   showPrompt();
   els.choices.hidden = false;
+  els.visual.innerHTML = ""; // wipe any stale visual from the previous round: a no-visual FLASH
+                             // skill (addfacts) never fills this box, so an earlier skill's
+                             // ten-frame would otherwise linger behind the equation. Each branch
+                             // below re-fills the box if THIS problem has a visual.
 
   if (p.steps) {            // multi-step problem (Quick Add): name each frame, then the total
     p._step = 0;
@@ -294,6 +436,7 @@ function onChoice(btn, value, p) {
     clearTimeout(p._flashTimer);
     clearTimeout(p._lockTimer);
     const clean = !p._wrongOnce;
+    session.cleanFlags.push(clean ? 1 : 0);   // one 1/0 per PROBLEM → feeds the gate + coins (finishRound)
     // record the silent time only on a clean first-try solve
     if (clean) {
       session.correctFirstTry++;
@@ -315,7 +458,11 @@ function onChoice(btn, value, p) {
     celebrateThenAdvance(praise, revealMs, p.holdMs || 0);   // p.holdMs: extra dwell (addtens, subitize)
   } else {
     // ---- wrong: NO penalty, let her retry ----
-    p._wrongOnce = true;
+    // Only a miss on the SCORED (final / one-shot) question poisons first-try accuracy.
+    // An identify-step slip (subitize naming a flashed frame) still gets the re-look help
+    // below, but doesn't count against mastery — that skill's gate is "totals first-try."
+    const isFinalQ = !p.steps || p._step === p.steps.length - 1;
+    if (isFinalQ) p._wrongOnce = true;
     if (!p._loggedMiss) { progress.logMiss(skill.id, q, value); p._loggedMiss = true; }   // log the active question
     btn.classList.add("is-wrong");
     btn.disabled = true;
@@ -388,7 +535,7 @@ function celebrateThenAdvance(praise, revealMs = 0, holdMs = 0) {
 
 function nextProblem() {
   session.index++;
-  if (session.index >= PROBLEMS_PER_SESSION) finishSession();
+  if (session.index >= session.len) finishSession();
   else renderProblem();
 }
 
@@ -433,25 +580,47 @@ function onReplay() {
 /* ============ REWARD ============ */
 function finishSession() {
   updateDots();
+  if (session._committed) return;        // idempotency: commit a round exactly once
+  session._committed = true;
 
-  const correct = session.correctFirstTry;
-  progress.addStars(correct);
+  // ONE atomic write: folds first-try flags, pays coins, fires the +25 jackpot on a fresh
+  // mastery (guarded). roundId guards against a double-invoke.
+  const summary = progress.finishRound({
+    skillId: skill.id, cleanFlags: session.cleanFlags, roundId: session.roundId,
+  });
+  const daily = progress.claimDailyReturn(localDayKey());   // +3 on the first completed round of a new day
+  // advanceIfComplete returns the NEW cycle number iff that mastery just completed the whole Season.
+  const newCycle = summary.newlyMastered ? curriculum.advanceIfComplete() : null;
+  const seasonDone = newCycle ? newCycle - 1 : 0;          // the Season she just finished (frames the reset as a win)
 
-  els.rewardStars.textContent =
-    "⭐".repeat(correct) + "☆".repeat(PROBLEMS_PER_SESSION - correct);
-
+  const correct = summary.cleanCount;
+  els.rewardStars.textContent = "⭐".repeat(correct) + "☆".repeat(session.len - correct);
   els.rewardTitle.textContent =
-    correct === PROBLEMS_PER_SESSION ? "Perfect! 🎉" : "You did it! 🎉";
+    seasonDone ? `Season ${seasonDone} complete! 🎉🏆`
+    : summary.newlyMastered ? "Skill unlocked! 🏆"
+    : (correct === session.len ? "Perfect! 🎉" : "You did it! 🎉");
 
-  els.rewardSpeed.textContent = speedLine();
+  let coinMsg = `+${summary.coinsEarned} 🪙`;
+  if (summary.newBest) coinMsg += "  ·  New best! ✨";
+  if (daily.granted) coinMsg += `  ·  +${daily.amount} daily`;
+  els.rewardCoins.textContent = coinMsg;
+  // Season-complete reframes the upcoming board reset as a fresh chapter, not erased trophies.
+  els.rewardSpeed.textContent = seasonDone
+    ? "You finished the whole board! A fresh Season begins. 🌟"
+    : speedLine();
 
   showScreen("reward");
   sfx.fanfare();
   if (!reduceMotion) bigConfetti();
+  if ((summary.newlyMastered || seasonDone) && !reduceMotion) {   // jackpot / Season fountain: extra bursts
+    setTimeout(bigConfetti, 450);
+    setTimeout(() => sfx.fanfare(), 380);
+    if (seasonDone) setTimeout(bigConfetti, 900);                 // one more for the Season milestone
+  }
   speech.speak(
-    correct === PROBLEMS_PER_SESSION
-      ? "Perfect session! You are a number hero."
-      : "Great job! You finished today's mission."
+    seasonDone ? `Wow! You finished Season ${seasonDone}! A whole new Season is ready for you.`
+      : summary.newlyMastered ? "You unlocked a new skill! Amazing."
+      : (correct === session.len ? "Perfect round! You are a number hero." : "Great job!")
   );
 }
 
@@ -492,20 +661,34 @@ function bigConfetti() { spawnConfetti(40, 1600); }
 function now() { return (window.performance?.now?.() ?? Date.now()); }
 
 /* ============ WIRE IT UP ============ */
-els.startBtn.addEventListener("click", () => {
-  // capture the prior rolling average ONCE, before this session adds to it
-  const hist = progress.getAll().times[skill.id] || [];
-  startSession();
-  session._priorAvg = hist.length ? hist.reduce((a, b) => a + b, 0) / hist.length : null;
-});
 els.hintBtn.addEventListener("click", onHint);
 els.replayBtn.addEventListener("click", onReplay);
-els.homeBtn.addEventListener("click", initHome);
+els.homeBtn.addEventListener("click", showBoard);          // "Back to board" after a round
 
-// Optional self-test: open index.html?debug to run generator asserts.
-if (new URLSearchParams(location.search).has("debug")) runSelfTest();
+// hidden parent report: long-press the ⭐ logo ~2s
+bindLongPress(els.logo, 2000, openPanel);
+els.panelUnlock.addEventListener("click", parentUnlock);
+els.panelClose.addEventListener("click", closePanel);
 
-initHome();
+// best-effort: ask the browser to keep our storage so a week-dark Safari TAB doesn't
+// evict coins/avatar/Seasons (the installed PWA icon is exempt, but this is free insurance).
+progress.requestPersistentStorage();
+
+const params = new URLSearchParams(location.search);
+if (params.has("debug")) runSelfTest();                    // self-test is pure; safe on a real device
+// dev: ?seed=N pre-clears the first N spine skills (for screenshots of a mid-Season board)
+const seedN = +(params.get("seed") || 0);
+if (seedN > 0) {
+  for (const id of curriculum.SEQUENCE.slice(0, seedN)) {
+    const flags = Array(curriculum.roundLength(id)).fill(1);
+    progress.finishRound({ skillId: id, cleanFlags: flags });
+    progress.finishRound({ skillId: id, cleanFlags: flags });
+  }
+}
+// dev: ?skill=<id> jumps straight into that skill's round (audio unlocks on the first tap)
+const previewId = params.get("skill");
+if (previewId && SKILLS[previewId]) startRound(SKILLS[previewId]);
+else showBoard();
 
 /* ---- PWA: register the service worker for offline + installability.
    Only on a real http(s) origin (skips file://, where it would throw)

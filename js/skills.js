@@ -182,7 +182,7 @@ export const SKILLS = {
         answer,
         // anti-autopilot: the "did the OTHER move" mistake (+10 when it was +5, or vice
         // versa) plus tight near-misses
-        choices: pickChoices(answer, [n + (add === 10 ? 5 : 10), answer + 1, answer - 1, answer + 2], 1, 59),
+        choices: pickChoices(answer, [n + (add === 10 ? 5 : 10), answer + 1, answer - 1, answer + 2], 1, 50),
         // revealOnWin: pop the destination cell green on a correct answer
         visual: { type: "chart50", from: n, to: answer, revealOnWin: true },
       };
@@ -376,7 +376,7 @@ export const SKILLS = {
         // mistakes: went DOWN a row instead of right (+10, the sibling skill — the tricky
         // structural error), or miscounted the rightward steps by one or two. (Dropped the
         // ones-sum "forgot the ten" = 10 below the answer, too easy to rule out by size.)
-        choices: pickChoices(answer, [base + 10, answer + 1, answer - 1, answer + 2], 1, 59),
+        choices: pickChoices(answer, [base + 10, answer + 1, answer - 1, answer + 2], 1, 50),
         visual: { type: "chart50", from: base, to: answer, revealOnWin: true },
       };
     },
