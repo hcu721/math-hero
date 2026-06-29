@@ -44,6 +44,10 @@
         </div>
       </header>
 
+      <!-- World selector: World 1 (Add & Subtract) is active; World 2 (× ÷) is a locked teaser.
+           Worlds are the top of the structure (World > Chapter > Skill); rendered by app.js. -->
+      <div class="worlds" id="worlds" aria-label="Worlds"></div>
+
       <p class="season-line" id="season-line">Season 1</p>
 
       <!-- app.js renders the tiles here (live / mastered / next-up / locked-pips) -->
@@ -51,12 +55,16 @@
 
       <div class="board-foot">
         <div class="avatar-box" id="avatar-box" aria-hidden="true"></div>
-        <p class="shop-teaser" id="shop-teaser">👗 Shop opening soon!</p>
+        <div class="board-foot-btns">
+          <button class="shop-btn" id="shop-btn">🛍️ Shop</button>
+          <button class="shop-btn" id="coll-btn">🎒 Collection</button>
+        </div>
       </div>
     </section>
 
     <!-- ============ PLAY SCREEN ============ -->
     <section class="screen" data-screen="play">
+      <button class="play-home" id="play-home" aria-label="Back to board" title="Back to board">🏠</button>
       <div class="dots" id="dots" aria-label="Round progress"></div>
       <p class="prompt" id="prompt">23 + 10 = ?</p>
       <div class="visual" id="visual" aria-hidden="true"></div>
@@ -79,6 +87,36 @@
     </section>
 
   </main>
+
+  <!-- Shop: TRY ON an item (tap it) then BUY. Opens from the board's Shop button. -->
+  <div class="panel" id="shop-panel" hidden>
+    <div class="panel-card">
+      <h2 class="panel-title">🛍️ Shop</h2>
+      <!-- live preview: shows her worn look + whatever she's trying on -->
+      <div class="avatar-box shop-preview" id="shop-avatar" aria-hidden="true"></div>
+      <p class="shop-coins-line">🪙 <span id="shop-coins">0</span> coins</p>
+      <button class="btn btn-go shop-buy-btn" id="shop-buy" hidden></button>
+      <div class="cat-tabs" id="shop-tabs"></div>
+      <div class="shop-items" id="shop-items"></div>
+      <div class="panel-actions">
+        <button class="btn btn-ghost" id="shop-close">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collection: her earned + bought items. Wear / take off here; what's worn shows on the homepage. -->
+  <div class="panel" id="coll-panel" hidden>
+    <div class="panel-card">
+      <h2 class="panel-title">🎒 Collection</h2>
+      <div class="avatar-box shop-preview" id="coll-avatar" aria-hidden="true"></div>
+      <div class="cat-tabs" id="coll-tabs"></div>
+      <div class="shop-items" id="coll-items"></div>
+      <div class="panel-actions">
+        <button class="btn btn-ghost" id="coll-removeall">🧹 Remove all</button>
+        <button class="btn btn-ghost" id="coll-close">Done</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Hidden parent report (long-press the ⭐ logo ~2s). On-device only. -->
   <div class="panel" id="parent-panel" hidden>

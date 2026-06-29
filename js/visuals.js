@@ -579,17 +579,21 @@ function expandTile(svg, x, y, val, color) {
   return g;
 }
 
-export function renderExpand(container, { base, add }) {
+export function renderExpand(container, { base, add, op = "+" }) {
   container.innerHTML = "";
   // PROBLEM STATE: intentionally EMPTY. She mentally converts the horizontal prompt
   // (18 + 20 = ?) into a vertical sum and solves it — no stacked equation, no
   // breakdown shown. The empty sized SVG just RESERVES the box so the reveal (which
   // draws the whole worked form) doesn't shift the layout below it.
-  const svg = makeSvg(360, 210, `${base} plus ${add}`);
+  // op: "+" (addtens) combines the tens; "-" (subtens) takes them away. The subtrahend's
+  // ones are always 0, so the ones column is identical either way — only the tens column
+  // and the one inter-row operator glyph differ. The whole worked-form layout is shared.
+  const sign = op === "-" ? -1 : 1;
+  const svg = makeSvg(360, 210, `${base} ${op === "-" ? "minus" : "plus"} ${add}`);
   const baseT = base - base % 10, baseO = base % 10;
-  const addT = add - add % 10, addO = add % 10;             // addO is 0 for addtens
-  const answer = base + add, ansT = baseT + addT, ansO = baseO + addO;
-  container._expand = { svg, geo: expandGeo, base, add, baseT, baseO, addT, addO, answer, ansT, ansO };
+  const addT = add - add % 10, addO = add % 10;             // addO is 0 for add/subtract-tens
+  const answer = base + sign * add, ansT = baseT + sign * addT, ansO = baseO + sign * addO;
+  container._expand = { svg, geo: expandGeo, op, base, add, baseT, baseO, addT, addO, answer, ansT, ansO };
   container.append(svg);
 }
 
@@ -601,8 +605,9 @@ export function renderExpand(container, { base, add }) {
 export function revealExpand(container, { animate = true, full = false } = {}) {
   const ex = container._expand;
   if (!ex) return 0;
-  const { svg, geo, base, add, baseT, baseO, addT, addO, answer, ansT, ansO } = ex;
+  const { svg, geo, op, base, add, baseT, baseO, addT, addO, answer, ansT, ansO } = ex;
   const { labelX, eqX, tensX, plusX, onesX, rowY, divY } = geo;
+  const OPER = op === "-" ? "−" : "+";   // inter-row operator (U+2212 minus for subtens; ones still + within a number)
   const ry = rowY[2];
   const done = ex._phase || 0;                 // 0 nothing, 1 breakdown shown, 2 answer revealed
   const need = full ? 2 : 1;
@@ -612,16 +617,16 @@ export function revealExpand(container, { animate = true, full = false } = {}) {
   // WRONG/hint too (she sees the place values), but the combined columns + final
   // answer stay hidden until she gets it right.
   if (done < 1) {
-    const row = (y, num, tVal, oVal, withPlus) => {
-      if (withPlus) svg.append(expandText(labelX - 30, y + 8, "+", 24, "#9fb0d8", 700));
+    const row = (y, num, tVal, oVal, oper) => {
+      if (oper) svg.append(expandText(labelX - 30, y + 8, oper, 24, "#9fb0d8", 700));
       svg.append(expandText(labelX, y + 8, num, 26, "#f4f7ff"));
       svg.append(expandText(eqX, y + 7, "=", 22, "#9fb0d8", 700));
       expandTile(svg, tensX, y, tVal, YELLOW);              // these stay put; copies fly
-      svg.append(expandText(plusX, y + 7, "+", 22, "#9fb0d8", 700));
+      svg.append(expandText(plusX, y + 7, "+", 22, "#9fb0d8", 700));   // ones always combine with +
       expandTile(svg, onesX, y, oVal, GREEN);
     };
-    row(rowY[0], base, baseT, baseO, false);
-    row(rowY[1], add, addT, addO, true);
+    row(rowY[0], base, baseT, baseO, "");                   // first number: no leading operator
+    row(rowY[1], add, addT, addO, OPER);                   // + for addtens, − for subtens
     svg.append(el("line", { x1: labelX - 22, y1: divY, x2: onesX + 32, y2: divY, stroke: "#3a4d8a", "stroke-width": 3, "stroke-linecap": "round" }));
     ex._phase = 1;
   }

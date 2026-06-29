@@ -55,10 +55,25 @@ function shuffle(arr) {
   return a;
 }
 
+/* ---- Escalator hook ----------------------------------------------------------
+   levelFor() maps a Season number (`cycle`) to a difficulty LEVEL for a skill,
+   clamped to that skill's own cap. A skill OPTS IN to escalation by declaring
+   `maxLevel` + `levels[]` and reading `this.levels[levelFor(cycle, this.maxLevel) - 1]`
+   inside generate(cycle). A skill with no cap is level 1 forever, so this stays inert
+   until a skill opts in. The cap encodes the VISUAL constraint (a 50-chart can't grow
+   past 50) — declared per skill, not hidden in the generator. */
+function levelFor(cycle, cap) {
+  return Math.min(Math.max(cycle || 1, 1), cap || 1);
+}
+
 /* Build exactly 3 choices: the answer + 2 plausible distractors.
    `candidates` are mistake-shaped wrong answers; we keep only those
    in [lo,hi], distinct, and != answer, then pad if we came up short. */
 function pickChoices(answer, candidates, lo, hi) {
+  // A band narrower than 3 integers (hi - lo < 2) can't yield the answer plus 2 distinct
+  // distractors — the pad loop would spin. Fail LOUD (in the self-test) instead of hanging
+  // the browser. An escalator level whose lo/hi collapses trips this immediately.
+  if (hi - lo < 2) throw new Error(`pickChoices: band [${lo},${hi}] too narrow for 3 distinct choices`);
   const distractors = [];
   for (const c of shuffle(candidates)) {
     if (distractors.length === 2) break;
@@ -197,6 +212,56 @@ export const SKILLS = {
       const move = p.visual.to - p.visual.from;
       if (move === 10) return p.answer <= 50;        // +10: straight down
       return move === 5 && p.answer <= 50            // +5: must stay in the same row (no wrap)
+        && Math.floor((p.visual.from - 1) / 10) === Math.floor((p.visual.to - 1) / 10);
+    },
+  },
+
+  /* ---- Subtraction: −10 AND −5 on the 50-chart — the INVERSE of plus10 (UP vs LEFT).
+     −10 = straight UP a row (drop a ten), −5 = LEFT 5 in the same row. Same chart, same
+     direction-aware revealJump (Math.sign of the cell deltas points the arrow UP / LEFT with
+     no new visual code — this is the first skill to use those two directions). Mixed 50/50
+     like plus10 so she must READ the operation, not autopilot. −5 is restricted to ones-digit
+     6–9 so "left 5" never wraps to the previous row's last cell: a ones-5 number (15) minus 5
+     lands on a ×10 cell (10) that the row formula reads as a DIFFERENT row, so the same-row
+     check would (correctly) reject it — we just don't generate those. ---- */
+  minus10: {
+    id: "minus10",
+    label: "Minus 10 & 5",
+    speak: "Minus ten or five",
+    explain: "Minus ten jumps straight up a row. Minus five steps left along the row. Read which one it is.",
+    win: [
+      "You read it and moved up! ⚡",
+      "Up for ten, left for five! 🧭",
+      "Same ones, one less ten! 👍",
+      "You found the pattern! ⭐",
+      "You picked the right move! ✅",
+    ],
+    make(n, sub) {
+      const answer = n - sub;                         // sub is 10 (UP a row) or 5 (LEFT, same row)
+      const promptHtml = `<span class="t-known">${n}</span> - <span class="t-add">${sub}</span> = ?`;
+      return {
+        prompt: `${n} - ${sub} = ?`,
+        promptHtml,
+        solvedHtml: solve(promptHtml, answer),
+        spoken: `${n} minus ${sub}.`,
+        answer,
+        // anti-autopilot: the "did the OTHER move" mistake (−10 when it was −5, or vice versa),
+        // plus tight near-misses
+        choices: pickChoices(answer, [n - (sub === 10 ? 5 : 10), answer + 1, answer - 1, answer + 2], 1, 50),
+        // revealOnWin: the arrow flies UP (−10) or LEFT (−5) to the destination cell, green
+        visual: { type: "chart50", from: n, to: answer, revealOnWin: true },
+      };
+    },
+    generate() {
+      if (Math.random() < 0.5) return this.make(randInt(11, 50), 10);  // −10: n−10 ≥ 1, any column
+      // −5: ones digit 6–9 so the "left 5" stays in-row (see the wrap note above); n−5 ≥ 1
+      return this.make(randInt(0, 4) * 10 + randInt(6, 9), 5);         // n in {6-9,16-19,26-29,36-39,46-49}
+    },
+    example() { return this.make(34, 10); },          // 34 − 10 = 24 (straight UP — the inverse of +10)
+    check(p) {
+      const move = p.visual.to - p.visual.from;       // negative: −10 (up) or −5 (left)
+      if (move === -10) return p.answer >= 1 && p.answer <= 50;
+      return move === -5 && p.answer >= 1 && p.answer <= 50   // −5: must stay in the same row (no wrap)
         && Math.floor((p.visual.from - 1) / 10) === Math.floor((p.visual.to - 1) / 10);
     },
   },
@@ -342,6 +407,54 @@ export const SKILLS = {
       const { base, add } = p.visual;
       return p.answer === base + add && add % 10 === 0 && add >= 20
         && base >= 10 && base % 10 !== 0 && p.answer <= 50;
+    },
+  },
+
+  /* ---- Subtraction: take away a multiple of ten — the INVERSE of addtens (the ones STAY).
+     38 − 20 = 18: split into tens and ones, take the tens away, the ones are untouched.
+     Reuses the `expand` worked-form visual via a single `op:'-'` param: the tens column
+     subtracts and the inter-row operator becomes "−"; the ones column is identical (the
+     subtrahend's ones are 0). Base tens strictly greater than the subtrahend's so the answer
+     stays a clean two-digit number (no borrow this drop — bridging-back is deferred). ---- */
+  subtens: {
+    id: "subtens",
+    label: "Subtract Tens",
+    speak: "Subtract tens",
+    explain: "Break each number into tens and ones. Take the tens away. The ones stay the same.",
+    win: [
+      "You took the tens away! 🔟",
+      "Tens gone, the ones stay! ⭐",
+      "You subtracted the tens! 👍",
+      "Just the tens changed! ✨",
+      "Tens take away tens. Nice! ⚡",
+    ],
+    make(base, tens) {
+      const sub = tens * 10, answer = base - sub;
+      const promptHtml = `<span class="t-known">${base}</span> - <span class="t-add">${sub}</span> = ?`;
+      return {
+        prompt: `${base} - ${sub} = ?`,
+        promptHtml,
+        solvedHtml: solve(promptHtml, answer),
+        spoken: `${base} minus ${sub}?`,
+        answer,
+        // mistakes: one ten too many/few (the signature error), or an ones-slip by one
+        choices: pickChoices(answer, [answer + 10, answer - 10, answer + 1, answer - 1], 1, 50),
+        // expanded-form place value with op:'-' — tens subtract, ones stay, comet fly-in
+        visual: { type: "expand", base, add: sub, op: "-", revealOnWin: true },
+        holdMs: 1100,   // linger on the finished equation so she can read it
+      };
+    },
+    generate() {
+      const tens = randInt(2, 3);                    // −20 or −30 (plain −10 is its own skill)
+      const baseTens = randInt(tens + 1, 4);         // base tens strictly greater → answer ≥ 10, base ≤ 49
+      const base = baseTens * 10 + randInt(1, 9);    // two-digit base with nonzero ones (the ones stay)
+      return this.make(base, tens);
+    },
+    example() { return this.make(38, 2); },          // 38 − 20 = 18 (the showcase case)
+    check(p) {
+      const { base, add } = p.visual;
+      return p.answer === base - add && add % 10 === 0 && add >= 20
+        && base >= 10 && base % 10 !== 0 && p.answer >= 10 && p.answer <= 50;
     },
   },
 
@@ -560,15 +673,20 @@ export const SKILLS = {
     },
   },
 
-  /* ---- Tier 1 (fluency): within-10 addition FACTS, pure mental — NO visual.
-     The scaffold-faded top rung above Quick Add: just the equation, add it in your
-     head. Same fact space (addends 1–9, sum ≤ 10); the off-by-1/2 distractors keep
-     it honest. No dots, no flash — true mental math. ---- */
+  /* ---- Tier 1 (fluency): addition FACTS, pure mental — NO visual. Just the equation, add it in
+     your head; off-by-1/2 distractors keep it honest. ESCALATES VERY GRADUALLY (Howard): the sum
+     ceiling climbs +1 PER SEASON, 10 → 20 — a long, gentle stretch. Single-digit facts top at
+     9+9=18, so 19–20 let one low-teen addend in (e.g. 11+9). The FLASH is DIFFICULTY-GATED in
+     make(): recall facts (≤10) flash for fluency; teen/bridging facts STAY VISIBLE so she reads +
+     computes without a working-memory load (the app's whole premise). Parent level-cap caps it. ---- */
   addfacts: {
     id: "addfacts",
     label: "Number Facts",
     speak: "Number facts",
     explain: "Add them in your head. You know these ones.",
+    // sum-ceiling ramp, +1 per Season — a long slow climb 10 → 20 (the last 2 levels allow a teen addend)
+    maxLevel: 11,
+    levels: [{ hi: 10 }, { hi: 11 }, { hi: 12 }, { hi: 13 }, { hi: 14 }, { hi: 15 }, { hi: 16 }, { hi: 17 }, { hi: 18 }, { hi: 19 }, { hi: 20 }],
     win: [
       "Quick math! ⚡",
       "You just knew it! 🧠",
@@ -576,9 +694,10 @@ export const SKILLS = {
       "Straight from your head! 🙌",
       "Number fact, nailed it! ✨",
     ],
-    make(a, b) {
+    make(a, b, bandHi = 12) {
       const total = a + b;
       const promptHtml = `<span class="t-known">${a}</span> + <span class="t-add">${b}</span> = ?`;
+      const recall = total <= 10;              // recall fact → FLASH for fluency; teen → HOLD visible
       return {
         prompt: `${a} + ${b} = ?`,
         promptHtml,
@@ -586,26 +705,33 @@ export const SKILLS = {
         spoken: `${a} plus ${b}?`,
         a, b,                                    // for the self-test invariant (no visual to read)
         answer: total,
-        choices: pickChoices(total, [total - 1, total + 1, total - 2, total + 2], 1, 12),
+        // band tracks the level's ceiling so the total±2 distractors always fit (up to 20 → 22)
+        choices: pickChoices(total, [total - 1, total + 1, total - 2, total + 2], 1, bandHi),
         holdMs: 600,                            // brief dwell to read the solved equation
-        mode: "flash",                          // FLASH the equation, then hide it — answer from memory
-        flashMs: 1800,                          // shows "6 + 4 = ?" briefly, then hides it
-        reflashMs: 2600,                        // a wrong answer re-flashes for another look
-        // no `visual` — pure mental math; the EQUATION itself is the flashed thing
+        // DIFFICULTY-GATED flash: easy facts flash (recall); teen/bridging facts stay VISIBLE so she
+        // isn't holding "9 + 8" in working memory WHILE computing it (the weak link this app offloads).
+        mode: recall ? "flash" : undefined,
+        flashMs: 1800,
+        reflashMs: 2600,
+        // no `visual` — pure mental math; the EQUATION itself is the (maybe-flashed) thing
       };
     },
-    generate() {
-      // facts with sum 6–10 only (Howard: skip sums < 6), and weight DOWN pairs with a 1
-      // or 2 so the too-easy little addends are rarer
+    generate(cycle = 1) {
+      // sum CEILING rises with the Season's level; floor stays 6 (Howard: skip sums < 6).
+      // weight DOWN pairs with a 1 or 2 so the too-easy little addends stay rarer.
+      const sumMax = this.levels[levelFor(cycle, this.maxLevel) - 1].hi;
+      const aMax = sumMax > 18 ? 11 : 9;              // single-digit through 18; one low-teen addend for 19–20
       const pairs = [];
-      for (let a = 1; a <= 9; a++)
-        for (let b = 1; b <= 9; b++)
-          if (a + b >= 6 && a + b <= 10) pairs.push([a, b]);
+      for (let a = 1; a <= aMax; a++)
+        for (let b = 1; b <= aMax; b++)
+          if (a + b >= 6 && a + b <= sumMax) pairs.push([a, b]);
       const [a, b] = weightedPick(pairs, ([x, y]) => lessSmall(x) * lessSmall(y));
-      return this.make(a, b);
+      return this.make(a, b, sumMax + 2);
     },
     example() { return this.make(6, 4); },          // 6 + 4 = 10
-    check(p) { return p.a + p.b === p.answer && p.a >= 1 && p.b >= 1 && p.answer >= 6 && p.answer <= 10; },
+    // relationship + structural bound only (addends ≤ 11, sum ≥ 6) — NEVER the level's ceiling,
+    // so the self-test can sweep every level. generate()'s pool enforces the per-level bounds.
+    check(p) { return p.a + p.b === p.answer && p.a >= 1 && p.a <= 11 && p.b >= 1 && p.b <= 11 && p.answer >= 6; },
   },
 
   /* ---- Tier 2a: making 10 (bonds to ten) — FLASH the ten-frame so she RECALLS the
@@ -785,6 +911,74 @@ export const SKILLS = {
     },
   },
 
+  /* ---- Subtraction FACTS, pure mental — NO visual. The fluency inverse of addfacts. STRAIGHT
+     take-away (Howard): she SEES "11 - 7 = ?" and HEARS "11 take away 7" — keep it clearly a
+     subtraction fact, NOT a re-skinned addition/missing-addend. Both parts stay single-digit
+     (like bonds), so a teen minuend is just two known facts. ESCALATES like addfacts: the
+     MINUEND ceiling climbs 10→12→15→18, true teens deferred to L3 (a teen take-away bridges
+     BACK over ten in the head — the same cliff, gated the same way). Same parent-cap hatch. ---- */
+  subfacts: {
+    id: "subfacts",
+    label: "Take-Away Facts",
+    speak: "Take away facts",
+    explain: "Take the second number away. Eleven take away seven. How many are left?",
+    win: [
+      "You knew the take-away! ⚡",
+      "Subtraction fact, nailed it! 🧠",
+      "Fast take-away! ⭐",
+      "Straight from your head! 🙌",
+      "You undid the adding! ✨",
+    ],
+    // minuend-ceiling ramp, mirrors addfacts: +1 per Season, a long slow climb 10 → 20 (the last
+    // 2 levels allow a teen result, e.g. "20 take away 9 = 11"). Flash is difficulty-gated in make().
+    maxLevel: 11,
+    levels: [{ hi: 10 }, { hi: 11 }, { hi: 12 }, { hi: 13 }, { hi: 14 }, { hi: 15 }, { hi: 16 }, { hi: 17 }, { hi: 18 }, { hi: 19 }, { hi: 20 }],
+    make(a, b) {
+      const answer = a - b;                      // a = minuend, b = subtrahend (taken away)
+      const promptHtml = `<span class="t-known">${a}</span> - <span class="t-add">${b}</span> = ?`;
+      const recall = a <= 10;                    // minuend within 10 → FLASH (recall); teen → HOLD visible
+      return {
+        prompt: `${a} - ${b} = ?`,
+        promptHtml,
+        solvedHtml: solve(promptHtml, answer),   // "11 - 7 = 4" on the win
+        spoken: `${a} take away ${b}?`,           // SUBTRACTION audio, matches the minus equation
+        a, b,                                     // for the self-test invariant (no visual to read)
+        answer,
+        // mistakes: off-by-one, the part taken away (b), added-instead (a+b); band hi=a+9 keeps a+b in range
+        choices: pickChoices(answer, [answer + 1, answer - 1, b, a + b], 0, a + 9),
+        holdMs: 600,
+        // DIFFICULTY-GATED flash: a within-10 take-away is recall (flash); a teen minuend bridges
+        // BACK over ten — keep the equation VISIBLE so she reads + computes, no working-memory load.
+        mode: recall ? "flash" : undefined,
+        flashMs: 1800,
+        reflashMs: 2600,
+        // no `visual` — pure mental math; the EQUATION itself is the (maybe-flashed) thing
+      };
+    },
+    generate(cycle = 1) {
+      // minuend CEILING rises +1 per Season; floor 6. Subtrahend stays single-digit; the result
+      // stays single-digit through minuend 18, with a low-teen result allowed only for 19–20.
+      const aMax = this.levels[levelFor(cycle, this.maxLevel) - 1].hi;
+      const ansMax = aMax > 18 ? 11 : 9;
+      const pairs = [];
+      for (let a = 6; a <= aMax; a++)
+        for (let b = 1; b <= 9; b++) {
+          const ans = a - b;
+          if (ans >= 1 && ans <= ansMax) pairs.push([a, b]);
+        }
+      // weight DOWN tiny subtrahends and tiny remainders so the too-easy ones stay rarer
+      const [a, b] = weightedPick(pairs, ([x, y]) => lessSmall(y) * lessSmall(x - y));
+      return this.make(a, b);
+    },
+    example() { return this.make(13, 5); },       // 13 - 5 = 8 (the showcase teen take-away)
+    // relationship + bounds only (subtrahend ≤ 9, result ≤ 11) — NEVER the level's ceiling, so the
+    // self-test can sweep every level. The minuend ceiling is enforced at generate-time by the pool.
+    check(p) {
+      return p.a - p.b === p.answer && p.b >= 1 && p.b <= 9
+        && p.answer >= 1 && p.answer <= 11 && p.b < p.a;
+    },
+  },
+
   /* ---- Tier 4a: doubles (same number twice) ---- */
   doubles: {
     id: "doubles",
@@ -883,12 +1077,19 @@ export function runSelfTest(rounds = 2000) {
   };
 
   for (const skill of Object.values(SKILLS)) {
-    for (let i = 0; i < rounds; i++) validate(skill, skill.generate());
+    // Sweep every difficulty LEVEL the skill declares (`maxLevel`, default 1), plus ONE
+    // level beyond the cap — proving generate() clamps instead of running off the end.
+    // Non-escalating skills ignore the arg, so this is identical to the old single pass
+    // for them; escalation is then auto-covered with no per-skill test to write.
+    const maxLevel = skill.maxLevel || 1;
+    for (let lvl = 1; lvl <= maxLevel + 1; lvl++) {
+      for (let i = 0; i < rounds; i++) validate(skill, skill.generate(lvl));
+    }
     validate(skill, skill.example());   // the demo instance must be valid too
   }
 
   const msg = failures === 0
-    ? `✅ skills self-test passed (${rounds} rounds × ${Object.keys(SKILLS).length} skills)`
+    ? `✅ skills self-test passed (${rounds} rounds × levels × ${Object.keys(SKILLS).length} skills)`
     : `❌ skills self-test: ${failures} failure(s)`;
   console.log(msg);
   return failures === 0;

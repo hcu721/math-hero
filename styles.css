@@ -237,6 +237,22 @@ body {
 .jar-amt { position: relative; z-index: 1; }
 
 .season-line { margin: 0; color: var(--ink-dim); font-size: 1.05rem; }
+.chapter-line { display: inline-block; margin-top: 3px; font-size: 0.82em; opacity: 0.85; }
+
+/* World selector (World > Chapter > Skill): active world glows green like a live tile;
+   the ×/÷ world is a dimmed, locked teaser. */
+.worlds { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.world {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  min-width: 150px; padding: 8px 14px; border-radius: 14px;
+  background: var(--bg-card); border: 2px solid var(--choice);
+}
+.world.active { border-color: var(--go); box-shadow: 0 0 12px rgba(54, 201, 139, 0.35); }
+.world.locked { opacity: 0.45; }
+.world-name { font-weight: 800; font-size: 0.98rem; color: var(--ink); }
+.world-sub { font-size: 0.82rem; color: var(--ink-dim); }
+.world-tag { margin-top: 2px; font-size: 0.7rem; color: var(--ink-dim); }
+.world.active .world-tag { color: var(--go); }
 
 .tiles { width: min(560px, 94vw); display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .tile-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; width: 100%; }
@@ -285,7 +301,68 @@ body {
 .board-foot { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 2px; }
 .avatar-box { width: clamp(120px, 30vw, 160px); }
 .avatar-box svg { width: 100%; height: auto; display: block; }
-.shop-teaser { margin: 0; color: var(--ink-dim); font-size: .95rem; }
+/* the board's Shop / Collection buttons (open the panels) */
+.board-foot-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+.shop-btn {
+  padding: 10px 18px; border-radius: 999px; cursor: pointer;
+  background: var(--bg-card); border: 2px solid var(--accent); color: var(--ink);
+  font-size: 1rem; font-weight: 800;
+}
+.shop-btn:active { transform: translateY(1px); }
+
+/* ============ SHOP / COLLECTION PANELS (reuse .panel / .panel-card) ============ */
+.shop-preview { width: clamp(110px, 28vw, 150px); margin: 0 auto 10px; }
+.shop-coins-line { margin: 0 0 12px; font-size: 1.2rem; font-weight: 800; color: var(--accent); text-align: center; }
+.shop-buy-btn { display: block; width: 100%; margin: 0 0 14px; }
+.shop-buy-btn:disabled { opacity: .5; cursor: default; }   /* prompt / "Need" states read as non-clickable */
+/* category tabs (the 7 slots) — filter the list below */
+/* two rows of 5 (10 categories) for a clean grid */
+.cat-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
+.cat-tab {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1;
+  padding: 7px 4px; border-radius: 10px; cursor: pointer;
+  background: var(--choice-bg); border: 2px solid transparent; color: var(--ink-dim); font: inherit; font-size: 1.05rem;
+}
+.cat-tab span { font-size: .6rem; font-weight: 700; }
+.cat-tab.on { border-color: var(--accent); color: var(--ink); background: var(--choice); }
+/* FIXED window: a constant-height box that scrolls for more items, so the panel doesn't
+   resize when you switch tabs or as the catalog grows. padding-right clears the scrollbar. */
+.shop-items { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; height: 34vh; min-height: 180px; overflow-y: auto; padding-right: 8px; }
+.shop-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 11px 14px; border-radius: 14px; cursor: pointer; color: var(--ink);
+  background: var(--choice-bg); border: 2px solid var(--choice); font: inherit;
+}
+.shop-item.trying { border-color: var(--accent); box-shadow: 0 0 10px rgba(255,204,51,.35); }
+.shop-item.worn   { border-color: var(--go); box-shadow: 0 0 10px rgba(54,201,139,.3); }
+.shop-item.tooexp { opacity: .55; }
+.shop-ic { width: 40px; flex-shrink: 0; }
+.shop-ic svg { width: 100%; height: auto; display: block; }
+.shop-nm { flex: 1; display: flex; flex-direction: column; font-weight: 700; }
+.shop-pr { font-size: .8rem; font-weight: 600; color: var(--ink-dim); }
+.shop-act { font-size: .9rem; font-weight: 800; color: var(--accent); white-space: nowrap; }
+.shop-item.worn .shop-act { color: var(--go); }
+.coll-empty { color: var(--ink-dim); text-align: center; padding: 14px; }
+
+/* play-screen Home button (top-left; abandons the in-progress round) */
+[data-screen="play"].is-active { position: relative; }
+.play-home {
+  position: absolute; top: 16px; left: 16px; z-index: 5; line-height: 1;
+  width: 48px; height: 48px; border-radius: 50%; cursor: pointer;
+  background: var(--bg-card); border: 2px solid var(--choice-hi); color: var(--ink); font-size: 1.3rem;
+}
+.play-home:active { transform: translateY(1px); }
+
+/* ============ DESIGN PROTOTYPE (?design dev page) ============ */
+.design-page { padding: 20px; max-width: 1100px; margin: 0 auto; }
+.design-title { text-align: center; margin: 0 0 4px; }
+.design-sub { text-align: center; color: var(--ink-dim); margin: 0 0 16px; font-size: .9rem; }
+.design-cat { margin: 22px 0 8px; font-size: 1.05rem; color: var(--ink-dim); }
+.design-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
+.design-card { background: var(--bg-card); border-radius: 12px; padding: 8px; text-align: center; }
+.design-av { width: 100%; }
+.design-av svg { width: 100%; height: auto; display: block; }
+.design-lbl { display: block; margin-top: 4px; font-size: .72rem; color: var(--ink-dim); }
 
 .reward-coins { font-size: 1.4rem; font-weight: 800; color: var(--accent); margin: 0; }
 

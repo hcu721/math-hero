@@ -23,20 +23,22 @@ import { SKILLS } from "./skills.js";
 export const SEQUENCE = [
   // Tier 1 foundation (round = 5)
   "subitize", "addfacts", "teen",
-  // Strategy (round = 7)
-  "make10", "bridge", "bonds", "subbond", "doubles", "neardouble",
+  // Strategy (round = 7; subfacts is a round-5 mental drill placed by fact-family, see LEN)
+  "make10", "bridge", "bonds", "subbond", "subfacts", "doubles", "neardouble",
   // Place-value within 50 (round = 10 — Howard's locked call)
-  "plus10", "skip10", "plus9", "addtens", "addones", "more",
+  "plus10", "minus10", "skip10", "plus9", "addtens", "subtens", "addones", "more",
 ];
 
 /* Per-skill round length. Set PER SKILL (not reflexively by tier) so it's easy
    to retune one skill from the parent panel. Defaults to 5. */
 const LEN = {
   subitize: 5, addfacts: 5, teen: 5,
-  make10: 7, bridge: 7, bonds: 7, subbond: 7, doubles: 7, neardouble: 7,
-  plus10: 10, skip10: 10, plus9: 10, addtens: 10, addones: 10,
+  make10: 7, bridge: 7, bonds: 7, subbond: 7, subfacts: 5, doubles: 7, neardouble: 7,
+  plus10: 10, minus10: 10, skip10: 10, plus9: 10, addtens: 10, subtens: 10, addones: 10,
   more: 5,   // entry-gate level: a quick 5-question number-sense exercise (Howard, 2026-06-28)
 };
+// subfacts: 5 — a mental take-away fluency drill (mirrors addfacts), kept short though it
+// lives among the round-7 strategy skills by fact-family placement.
 export function roundLength(id) { return LEN[id] || 5; }
 
 export const WINDOW = 2;   // how many tiles are "live" (pickable) at once
@@ -61,18 +63,78 @@ export function tileState(id) {
   return liveIds().includes(id) ? "live" : "locked";
 }
 
-/* The whole board, in spine order, for the renderer.
-   `level: "E"` drives the E·M·H teaser pips — only E is real in Phase A; M/H are
-   ghosted (the deferred difficulty escalator). */
+/* ------------------------------------------------------------
+   CHAPTERS — the avatar/reward loop fires per CHAPTER, not per whole-spine Season.
+   A chapter is a contiguous slice of SEQUENCE; sizes 3/7/4/4 (Howard, 2026-06-28) give a
+   fast 3-skill first win, then tighter payoffs through the harder place-value back half.
+   Defined as SLICES so SEQUENCE stays the single source of teaching order (no duplicated id
+   lists to drift). Completion is DERIVED from the per-skill cleared flags — cursorless, like
+   liveIds()/seasonComplete() — so there's no new persisted chapter state, and the 2-wide
+   picker already forces in-order clearing, so chapters complete as the window passes them.
+   ------------------------------------------------------------ */
+const CHAPTER_DEFS = [
+  // `part`/`icon` = the avatar piece this chapter earns (named in the reward subtitle + the
+  // SVG add-on in app.js renderAvatar). part is plain (it's spoken too); icon is screen-only.
+  { title: "Foundations", size: 3, part: "Star Clip",  icon: "⭐" },   // subitize, addfacts, teen
+  { title: "Strategies",  size: 7, part: "Cape",       icon: "🦸" },   // make10, bridge, bonds, subbond, subfacts, doubles, neardouble
+  { title: "Chart Moves", size: 4, part: "Crown",      icon: "👑" },   // plus10, minus10, skip10, plus9
+  { title: "Tens & Ones", size: 4, part: "Magic Wand", icon: "🪄" },   // addtens, subtens, addones, more
+];
+
+export const CHAPTERS = (() => {
+  const out = [];
+  let start = 0;
+  for (let i = 0; i < CHAPTER_DEFS.length; i++) {
+    const def = CHAPTER_DEFS[i];
+    out.push({ id: i + 1, title: def.title, part: def.part, icon: def.icon, skills: SEQUENCE.slice(start, start + def.size) });
+    start += def.size;
+  }
+  return out;
+})();
+
+/* Which chapter a skill belongs to (or null). */
+export function chapterFor(skillId) {
+  return CHAPTERS.find((ch) => ch.skills.includes(skillId)) || null;
+}
+
+/* Has every skill in this chapter been cleared THIS cycle? (Derived; fires the avatar-part
+   payoff in app.js — see the chapter grant.) */
+export function chapterComplete(chapterId) {
+  const ch = CHAPTERS.find((c) => c.id === chapterId);
+  return !!ch && ch.skills.every((id) => progress.isClearedThisCycle(id));
+}
+
+/* {done,total} cleared in a chapter — drives the board's "Chapter N · x/y" progress bar. */
+export function chapterProgress(chapterId) {
+  const ch = CHAPTERS.find((c) => c.id === chapterId);
+  if (!ch) return { done: 0, total: 0 };
+  return { done: ch.skills.filter((id) => progress.isClearedThisCycle(id)).length, total: ch.skills.length };
+}
+
+/* The chapter the player is currently working in: the one holding the first live tile.
+   When the whole Season is cleared there are no live tiles, so fall back to the last. */
+export function activeChapter() {
+  const live = liveIds();
+  return live.length ? chapterFor(live[0]) : CHAPTERS[CHAPTERS.length - 1];
+}
+
+/* The whole board, in spine order, for the renderer. Each tile carries its chapter so the
+   renderer can group tiles and show the active chapter's progress.
+   `level: "E"` drives the E·M·H teaser pips — only E is real today; M/H are ghosted. */
 export function board() {
   const live = new Set(liveIds());
-  return SEQUENCE.map((id) => ({
-    id,
-    label: SKILLS[id] ? SKILLS[id].label : id,
-    len: roundLength(id),
-    level: "E",
-    state: progress.isClearedThisCycle(id) ? "mastered" : (live.has(id) ? "live" : "locked"),
-  }));
+  return SEQUENCE.map((id) => {
+    const ch = chapterFor(id);
+    return {
+      id,
+      label: SKILLS[id] ? SKILLS[id].label : id,
+      len: roundLength(id),
+      level: "E",
+      chapterId: ch ? ch.id : 0,
+      chapterTitle: ch ? ch.title : "",
+      state: progress.isClearedThisCycle(id) ? "mastered" : (live.has(id) ? "live" : "locked"),
+    };
+  });
 }
 
 /* Has the whole Season been cleared (all 15 mastered this cycle)? */
@@ -100,9 +162,10 @@ export function runGateTest() {
     progress.finishRound({ skillId: id, cleanFlags: flags });
   };
 
-  // every SEQUENCE id must be a real skill
+  // every SEQUENCE id must be a real skill, and the spine and the round-length table agree
   assert("every spine id exists in SKILLS", SEQUENCE.every((id) => !!SKILLS[id]));
-  assert("spine has 15 skills", SEQUENCE.length === 15);
+  assert("spine length matches LEN table", SEQUENCE.length === Object.keys(LEN).length);
+  assert("every spine id has a round length", SEQUENCE.every((id) => id in LEN));
 
   // 1) cold start
   progress.wipe();
@@ -124,7 +187,7 @@ export function runGateTest() {
   // 3) clear the whole Season → completes, advances, resets to cold start
   progress.wipe();
   for (const id of SEQUENCE) clear(id);
-  assert("season complete after all 15", seasonComplete());
+  assert("season complete after all skills cleared", seasonComplete());
   assert("advance returns cycle 2", advanceIfComplete() === 2);
   assert("cycle now 2", progress.getCycle() === 2);
   assert("post-advance back to cold start", liveIds().join() === "subitize,addfacts");
@@ -135,6 +198,52 @@ export function runGateTest() {
   progress.finishRound({ skillId: "more", cleanFlags: rusty });
   progress.finishRound({ skillId: "more", cleanFlags: rusty });
   assert("rusty 0.6 does NOT re-master post-advance", progress.isClearedThisCycle("more") === false);
+
+  // 5) CHAPTERS partition the spine; completion is DERIVED from the cleared flags
+  progress.wipe();
+  assert("chapters cover the whole spine", CHAPTERS.reduce((n, c) => n + c.skills.length, 0) === SEQUENCE.length);
+  assert("every skill is in exactly one chapter",
+    SEQUENCE.every((id) => CHAPTERS.filter((c) => c.skills.includes(id)).length === 1));
+  assert("chapter sizes are 3/7/4/4", CHAPTERS.map((c) => c.skills.length).join() === "3,7,4,4");
+  assert("cold: no chapter complete", CHAPTERS.every((c) => !chapterComplete(c.id)));
+  assert("cold: active chapter is Ch1", activeChapter() && activeChapter().id === 1);
+  for (const id of CHAPTERS[0].skills) clear(id);          // clear all of chapter 1
+  assert("Ch1 complete after its skills cleared", chapterComplete(1));
+  assert("Ch2 still incomplete", !chapterComplete(2));
+  assert("Ch1 progress reads 3/3", chapterProgress(1).done === 3 && chapterProgress(1).total === 3);
+  assert("active chapter advanced to Ch2", activeChapter() && activeChapter().id === 2);
+  for (const id of SEQUENCE) clear(id);                    // clear the rest of the Season
+  assert("all chapters complete at Season end", CHAPTERS.every((c) => chapterComplete(c.id)) && seasonComplete());
+
+  // 6) schema reservations (world pointer, parent level-cap hatch, idempotent chapter grant)
+  progress.wipe();
+  assert("world defaults to 1", progress.getWorld() === 1);
+  assert("effectiveCycle is identity with no cap", progress.effectiveCycle("addfacts", 3) === 3);
+  progress.setParentLevelCap("addfacts", 2);
+  assert("effectiveCycle clamps to the parent cap", progress.effectiveCycle("addfacts", 3) === 2);
+  assert("effectiveCycle below the cap is unchanged", progress.effectiveCycle("addfacts", 1) === 1);
+  progress.setParentLevelCap("addfacts", null);
+  assert("clearing the cap restores identity", progress.effectiveCycle("addfacts", 3) === 3);
+  const g1 = progress.grantChapterPart(1), g2 = progress.grantChapterPart(1);
+  assert("chapter part granted exactly once", g1.granted === true && g2.granted === false);
+  assert("chapter part is owned after grant", progress.hasChapterPart(1));
+
+  // 7) shop: purchase deducts coins, is idempotent, gates on balance; equip toggles
+  progress.wipe();
+  progress.finishRound({ skillId: "subitize", cleanFlags: [1, 1, 1, 1, 1] });   // earn some coins
+  const before = progress.getCoins();
+  const buy = progress.purchase("bow", 5);
+  assert("purchase deducts coins + marks owned", buy.ok && progress.isOwned("bow") && progress.getCoins() === before - 5);
+  assert("re-purchase is a no-op", progress.purchase("bow", 5).ok === false);
+  assert("cannot afford → no purchase", progress.purchase("dear", 9_999_999).ok === false && !progress.isOwned("dear"));
+  progress.toggleEquip("bow");
+  assert("toggleEquip wears an owned item", progress.isEquipped("bow"));
+  progress.toggleEquip("bow");
+  assert("toggleEquip again takes it off", progress.isEquipped("bow") === false);
+  assert("cannot equip an unowned item", progress.toggleEquip("ghost") === false && !progress.isEquipped("ghost"));
+  assert("setEquipped(true) wears an owned item", progress.setEquipped("bow", true) === true && progress.isEquipped("bow"));
+  assert("setEquipped(false) removes it", progress.setEquipped("bow", false) === false && progress.isEquipped("bow") === false);
+  assert("setEquipped(true) on unowned is refused", progress.setEquipped("ghost", true) === false && !progress.isEquipped("ghost"));
 
   out.forEach((l) => console.log(l));
   console.log(ok ? "✅ curriculum gate-test passed" : "❌ curriculum gate-test FAILED");

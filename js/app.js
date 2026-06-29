@@ -55,6 +55,7 @@ const els = {
   jarFill: $("jar-fill"),
   coinAmt: $("coin-amt"),
   seasonLine: $("season-line"),
+  worlds: $("worlds"),
   tiles: $("tiles"),
   avatarBox: $("avatar-box"),
   // play
@@ -77,6 +78,25 @@ const els = {
   panelRows: $("panel-rows"),
   panelUnlock: $("panel-unlock"),
   panelClose: $("panel-close"),
+  // shop
+  shopBtn: $("shop-btn"),
+  shopPanel: $("shop-panel"),
+  shopItems: $("shop-items"),
+  shopCoins: $("shop-coins"),
+  shopBuy: $("shop-buy"),
+  shopClose: $("shop-close"),
+  shopAvatar: $("shop-avatar"),
+  shopTabs: $("shop-tabs"),
+  // collection
+  collBtn: $("coll-btn"),
+  collPanel: $("coll-panel"),
+  collItems: $("coll-items"),
+  collClose: $("coll-close"),
+  collAvatar: $("coll-avatar"),
+  collTabs: $("coll-tabs"),
+  collRemove: $("coll-removeall"),
+  // play-screen home
+  playHome: $("play-home"),
 };
 
 /* A persistent full-screen confetti layer. The markup's #confetti lives
@@ -96,7 +116,6 @@ function showScreen(name) {
 }
 
 /* ============ BOARD (home) ============ */
-const JAR_GOAL = 120;   // coins to "wake the shop" — a near-term fill-to-goal target (cosmetic, Phase A)
 
 function showBoard() { renderBoard(); showScreen("board"); }
 
@@ -111,8 +130,11 @@ function renderBoard() {
   const nextUp = locked[0] || null;
   const farLocked = locked.slice(1);
 
-  els.seasonLine.textContent =
-    `Season ${progress.getCycle()} · ${mastered.length} of ${cells.length} unlocked`;
+  const actCh = curriculum.activeChapter();
+  const cp = actCh ? curriculum.chapterProgress(actCh.id) : null;
+  els.seasonLine.innerHTML =
+    `Season ${progress.getCycle()} · ${mastered.length} of ${cells.length} unlocked` +
+    (actCh ? `<br><span class="chapter-line">Chapter ${actCh.id} of ${curriculum.CHAPTERS.length}: ${actCh.title} · ${cp.done} / ${cp.total}</span>` : "");
 
   els.tiles.innerHTML = "";
   if (mastered.length) { const r = rowEl(); mastered.forEach((c) => r.append(tileEl(c, "🏆"))); els.tiles.append(r); }
@@ -125,8 +147,28 @@ function renderBoard() {
     els.tiles.append(pips);
   }
 
+  renderWorlds();
   renderJar();
   renderAvatar();
+}
+
+/* The two Worlds, top of the structure (World > Chapter > Skill). World 1 (additive) is
+   active; World 2 (×/÷) is a LOCKED teaser — its content is a later drop, but showing it now
+   makes the journey legible and builds anticipation. progress.getWorld() picks the active one. */
+function renderWorlds() {
+  const active = progress.getWorld();
+  const worlds = [
+    { id: 1, iconL: "➕", iconR: "➖", name: "Add & Subtract" },
+    { id: 2, iconL: "✖️", iconR: "➗", name: "Multiply & Divide", locked: true },
+  ];
+  els.worlds.innerHTML = worlds.map((w) => {
+    const isActive = w.id === active && !w.locked;
+    const cls = w.locked ? "world locked" : (isActive ? "world active" : "world");
+    const tag = w.locked ? "🔒 Coming soon" : (isActive ? "Playing now" : "");
+    return `<div class="${cls}"><span class="world-name">${w.iconL} World ${w.id} ${w.iconR}</span>` +
+           `<span class="world-sub">${w.name}</span>` +
+           (tag ? `<span class="world-tag">${tag}</span>` : "") + `</div>`;
+  }).join("");
 }
 
 function rowEl() { const r = document.createElement("div"); r.className = "tile-row"; return r; }
@@ -136,34 +178,137 @@ function tileEl(c, glyph) {
   t.className = `tile ${c.state}`;
   const tappable = c.state === "live" || c.state === "mastered";
   t.disabled = !tappable;
-  const levels = (c.state === "live" || c.state === "mastered")
-    ? `<span class="levels">${["E", "M", "H"].map((L) => `<span class="lvl ${L === c.level ? "on" : ""}">${L}</span>`).join("")}</span>`
-    : "";
+  // (the old E/M/H pips were removed — difficulty is now Season-driven by the escalator,
+  // not a per-tile choice, so the letters were confusing with no role.)
   t.innerHTML =
     `<span class="tile-name">${glyph} ${c.label}</span>` +
-    (c.state === "live" ? `<span class="tile-sub">${c.len} questions</span>` : "") +
-    levels;
+    (c.state === "live" ? `<span class="tile-sub">${c.len} questions</span>` : "");
   if (tappable) t.addEventListener("click", () => startRound(SKILLS[c.id]));
   return t;
 }
 
+/* The jar fill tracks progress toward the cheapest SPECIAL prize she doesn't own yet — a real
+   saving goal that RETARGETS as she collects (Mermaid → Princess → …) and reads full once she
+   owns them all. This is the coin economy's anchor: prizes are the big sink, the jar is the meter. */
+function jarGoal() {
+  const next = ITEMS.filter((i) => i.slot === "outfit" && !progress.isOwned(i.id))
+    .sort((a, b) => a.price - b.price)[0];
+  return next ? next.price : 1;
+}
 function renderJar() {
   const coins = progress.getCoins();
   els.coinAmt.textContent = coins;
-  els.jarFill.style.width = Math.min(100, Math.round((coins / JAR_GOAL) * 100)) + "%";
+  els.jarFill.style.width = Math.min(100, Math.round((coins / jarGoal()) * 100)) + "%";
 }
 
-/* The BLAND starter avatar (Phase A: free defaults only; the part-swap shop is Phase B).
-   Drawn back→front: back-hair, legs, shorts, feet, torso, arms+hands, top, head, face, bangs. */
-function renderAvatar() {
+/* ---- ITEMS: the unified avatar wardrobe (earned chapter parts + buyable shop items) --------
+   Each item: id, label, icon (lists/tabs), price (0 = earned), slot (the overlap group), z
+   (drawn BEHIND the body or in FRONT), and svg (its drawing in the 240×300 avatar space).
+   Earned parts and bought items share SLOTS, so wearing one bumps out anything in that slot —
+   nothing ever overlaps. Coordinates are tuned by eye in the browser. ---- */
+const ITEMS = [
+  // EARNED (granted by clearing chapters; label/icon also live in curriculum.CHAPTERS)
+  { id: "chapter-3", label: "Crown",     icon: "👑", price: 0, slot: "head", z: "front", svg: `<path d="M92 54 L100 38 L110 50 L120 34 L130 50 L140 38 L148 54 Z" fill="#ffd34d" stroke="#e0a800" stroke-width="1.5"/><circle cx="100" cy="41" r="3" fill="#ff5f6d"/><circle cx="120" cy="37" r="3" fill="#5fd0ff"/><circle cx="140" cy="41" r="3" fill="#7bff9b"/>` },
+  { id: "chapter-1", label: "Star Clip", icon: "⭐", price: 0, slot: "hair", z: "front", svg: `<path d="M150 58 l3.5 8 8.5 1 -6 6 1.5 8.5 -7.5 -4.5 -7.5 4.5 1.5 -8.5 -6 -6 8.5 -1 z" fill="#ffcc33" stroke="#e0a800" stroke-width="1"/>` },
+  { id: "chapter-2", label: "Cape",      icon: "🦸", price: 0, slot: "back", z: "back",  svg: `<path d="M86 150 Q56 234 78 286 L120 270 L162 286 Q184 234 154 150 Q120 168 86 150 Z" fill="#7b3fb0"/>` },
+  { id: "chapter-4", label: "Wand",      icon: "🪄", price: 0, slot: "hand", z: "front", svg: `<rect x="184" y="196" width="5" height="44" rx="2.5" fill="#c9a24a" transform="rotate(16 186 218)"/><path d="M197 184 l3 7 8 1 -6 5.5 1.5 8 -6.5 -4 -6.5 4 1.5 -8 -6 -5.5 8 -1 z" fill="#ffe066" stroke="#e0a800" stroke-width="1"/>` },
+  // TOPS (drawn over the default gray shirt)
+  { id: "redtee",    label: "Red Tee",    icon: "👕", price: 50, slot: "top", z: "front", svg: `<path d="M84 158 Q120 149 156 158 L153 232 Q120 244 87 232 Z" fill="#ff5f6d"/><path d="M88 160 Q60 156 56 182 Q58 198 76 196 Q92 178 88 160 Z" fill="#ff5f6d"/><path d="M152 160 Q180 156 184 182 Q182 198 164 196 Q148 178 152 160 Z" fill="#ff5f6d"/>` },
+  { id: "violettee", label: "Violet Tee", icon: "👚", price: 50, slot: "top", z: "front", svg: `<path d="M84 158 Q120 149 156 158 L153 232 Q120 244 87 232 Z" fill="#9b5de5"/><path d="M88 160 Q60 156 56 182 Q58 198 76 196 Q92 178 88 160 Z" fill="#9b5de5"/><path d="M152 160 Q180 156 184 182 Q182 198 164 196 Q148 178 152 160 Z" fill="#9b5de5"/>` },
+  { id: "startee",   label: "Star Tee",   icon: "🌟", price: 80, slot: "top", z: "front", svg: `<path d="M84 158 Q120 149 156 158 L153 232 Q120 244 87 232 Z" fill="#2fc7c7"/><path d="M88 160 Q60 156 56 182 Q58 198 76 196 Q92 178 88 160 Z" fill="#2fc7c7"/><path d="M152 160 Q180 156 184 182 Q182 198 164 196 Q148 178 152 160 Z" fill="#2fc7c7"/><path d="M120 184 l4 9 10 .5 -7.5 6.5 2 9.5 -8.5 -5 -8.5 5 2 -9.5 -7.5 -6.5 10 -.5 z" fill="#ffe066"/>` },
+  // BOTTOMS (drawn over the default gray shorts)
+  { id: "blueshorts", label: "Blue Shorts", icon: "🩳", price: 50, slot: "bottom", z: "front", svg: `<path d="M87 224 Q120 219 153 224 L150 251 L126 251 L120 236 L114 251 L90 251 Z" fill="#4a7fd8" stroke="#3563b0" stroke-width="1"/>` },
+  { id: "pinkskirt",  label: "Pink Skirt",  icon: "👗", price: 70, slot: "bottom", z: "front", svg: `<path d="M87 224 Q120 219 153 224 L165 264 Q120 274 75 264 Z" fill="#ff8fc7" stroke="#e070b0" stroke-width="1"/>` },
+  { id: "tutu",       label: "Tutu",        icon: "🩰", price: 90, slot: "bottom", z: "front", svg: `<path d="M87 226 Q120 221 153 226 L168 252 Q120 266 72 252 Z" fill="#ffb3de"/><path d="M80 244 Q120 256 160 244" fill="none" stroke="#ff8fc7" stroke-width="3"/>` },
+  // HEAD
+  { id: "bow",      label: "Bow",     icon: "🎀", price: 50,  slot: "head", z: "front", svg: `<path d="M120 50 L104 42 L104 60 Z" fill="#ff5f9e"/><path d="M120 50 L136 42 L136 60 Z" fill="#ff5f9e"/><circle cx="120" cy="51" r="5" fill="#e03e80"/>` },
+  { id: "tophat",   label: "Top Hat", icon: "🎩", price: 150, slot: "head", z: "front", svg: `<rect x="90" y="40" width="60" height="8" rx="3" fill="#333350" stroke="#8a8ab0" stroke-width="1"/><rect x="101" y="12" width="38" height="30" rx="3" fill="#333350" stroke="#8a8ab0" stroke-width="1"/><rect x="101" y="30" width="38" height="6" fill="#ff5f6d"/>` },
+  { id: "tiara",    label: "Tiara",   icon: "💎", price: 120, slot: "head", z: "front", svg: `<path d="M98 52 Q120 38 142 52" fill="none" stroke="#ffe066" stroke-width="4"/><path d="M120 39 l2 5 5 .5 -4 3.5 1 5 -4 -2.5 -4 2.5 1 -5 -4 -3.5 5 -.5 z" fill="#7fdfff" stroke="#e0a800" stroke-width=".5"/><circle cx="105" cy="49" r="2.5" fill="#ff8fc7"/><circle cx="135" cy="49" r="2.5" fill="#ff8fc7"/>` },
+  // HAIR
+  { id: "flower",   label: "Flower",   icon: "🌸", price: 75, slot: "hair", z: "front", svg: `<circle cx="84" cy="66" r="5" fill="#ff8fc7"/><circle cx="77" cy="62" r="5" fill="#ff8fc7"/><circle cx="91" cy="62" r="5" fill="#ff8fc7"/><circle cx="79" cy="71" r="5" fill="#ff8fc7"/><circle cx="89" cy="71" r="5" fill="#ff8fc7"/><circle cx="84" cy="66" r="4" fill="#ffd34d"/>` },
+  { id: "headband", label: "Headband", icon: "💗", price: 60, slot: "hair", z: "front", svg: `<path d="M70 66 Q120 46 170 66 L167 75 Q120 56 73 75 Z" fill="#ff5f9e"/>` },
+  // FACE
+  { id: "sunglasses", label: "Sunglasses", icon: "🕶️", price: 100, slot: "face", z: "front", svg: `<rect x="89" y="100" width="23" height="14" rx="5" fill="#2b3358" stroke="#7f8cc0" stroke-width="1"/><rect x="128" y="100" width="23" height="14" rx="5" fill="#2b3358" stroke="#7f8cc0" stroke-width="1"/><rect x="112" y="105" width="16" height="3" fill="#2b3358"/>` },
+  { id: "glasses",    label: "Glasses",    icon: "👓", price: 70,  slot: "face", z: "front", svg: `<circle cx="101" cy="107" r="10" fill="none" stroke="#5a6aa0" stroke-width="3"/><circle cx="139" cy="107" r="10" fill="none" stroke="#5a6aa0" stroke-width="3"/><line x1="111" y1="107" x2="129" y2="107" stroke="#5a6aa0" stroke-width="3"/>` },
+  // NECK
+  { id: "necklace", label: "Necklace", icon: "📿", price: 90,  slot: "neck", z: "front", svg: `<path d="M104 150 Q120 168 136 150" fill="none" stroke="#ffd34d" stroke-width="2.5"/><circle cx="120" cy="164" r="4" fill="#7fdfff" stroke="#e0a800" stroke-width=".5"/>` },
+  { id: "bowtie",   label: "Bow Tie",  icon: "🎀", price: 60,  slot: "neck", z: "front", svg: `<path d="M120 153 L109 148 L109 160 Z" fill="#ff5f6d"/><path d="M120 153 L131 148 L131 160 Z" fill="#ff5f6d"/><rect x="117" y="150" width="6" height="6" rx="1" fill="#d63b48"/>` },
+  { id: "scarf",    label: "Scarf",    icon: "🧣", price: 100, slot: "neck", z: "front", svg: `<path d="M99 147 Q120 159 141 147 L143 156 Q120 169 97 156 Z" fill="#9b5de5"/><path d="M116 156 l-2 22 12 0 -2 -22 z" fill="#8a4dd0"/>` },
+  // BACK
+  { id: "wings",    label: "Wings",    icon: "🦋", price: 200, slot: "back", z: "back", svg: `<path d="M86 162 Q38 150 34 202 Q60 214 92 198 Z" fill="#9fd8ff" opacity="0.92"/><path d="M154 162 Q202 150 206 202 Q180 214 148 198 Z" fill="#9fd8ff" opacity="0.92"/>` },
+  { id: "backpack", label: "Backpack", icon: "🎒", price: 90,  slot: "back", z: "back", svg: `<rect x="76" y="158" width="88" height="68" rx="14" fill="#6a9be0" stroke="#3a6cae" stroke-width="2"/>` },
+  // HANDS
+  { id: "balloon",  label: "Balloon",  icon: "🎈", price: 60,  slot: "hand", z: "front", svg: `<line x1="180" y1="226" x2="190" y2="176" stroke="#ccd2e8" stroke-width="1.5"/><ellipse cx="192" cy="164" rx="14" ry="17" fill="#ff5f6d"/>` },
+  { id: "bouquet",  label: "Bouquet",  icon: "💐", price: 110, slot: "hand", z: "front", svg: `<rect x="185" y="214" width="3" height="18" fill="#3a7a3a" transform="rotate(8 186 223)"/><circle cx="182" cy="208" r="6" fill="#ff8fc7"/><circle cx="193" cy="211" r="6" fill="#ffd34d"/><circle cx="187" cy="217" r="6" fill="#7fdfff"/>` },
+  // SHOES
+  { id: "sneakers", label: "Sneakers", icon: "👟", price: 80,  slot: "shoes", z: "front", svg: `<ellipse cx="106" cy="289" rx="15" ry="10" fill="#f4f7ff" stroke="#5a6aa0" stroke-width="1.5"/><ellipse cx="134" cy="289" rx="15" ry="10" fill="#f4f7ff" stroke="#5a6aa0" stroke-width="1.5"/><path d="M93 289 q13 5 26 0" fill="none" stroke="#ff5f6d" stroke-width="2"/><path d="M121 289 q13 5 26 0" fill="none" stroke="#ff5f6d" stroke-width="2"/>` },
+  { id: "boots",    label: "Boots",    icon: "🥾", price: 120, slot: "shoes", z: "front", svg: `<rect x="97" y="268" width="18" height="22" rx="5" fill="#8a5a3a"/><rect x="121" y="268" width="18" height="22" rx="5" fill="#8a5a3a"/><ellipse cx="106" cy="290" rx="14" ry="8" fill="#6a4226"/><ellipse cx="134" cy="290" rx="14" ry="8" fill="#6a4226"/>` },
+  { id: "slippers", label: "Slippers", icon: "🥿", price: 50,  slot: "shoes", z: "front", svg: `<ellipse cx="106" cy="290" rx="14" ry="9" fill="#ff9ecb"/><ellipse cx="134" cy="290" rx="14" ry="9" fill="#ff9ecb"/><circle cx="106" cy="287" r="3" fill="#fff"/><circle cx="134" cy="287" r="3" fill="#fff"/>` },
+  // SPECIALTY — collector prizes (premium coin SINKS; the aspirational goals across Seasons/Worlds).
+  // The "outfit" slot is its own thing, so a prize is one-at-a-time and never clashes with accessories.
+  { id: "mermaid",  label: "Mermaid",  icon: "🧜‍♀️", price: 600,  slot: "outfit", z: "front", svg: `<path d="M90 178 Q120 170 150 178 Q158 238 134 282 Q120 294 106 282 Q82 238 90 178 Z" fill="#2fd0a8" stroke="#1fa886" stroke-width="1.5"/><path d="M120 276 Q84 290 76 308 Q104 302 120 290 Q136 302 164 308 Q156 290 120 276 Z" fill="#27b894"/><circle cx="109" cy="198" r="2.5" fill="#9affe6"/><circle cx="131" cy="198" r="2.5" fill="#9affe6"/><circle cx="120" cy="212" r="2.5" fill="#9affe6"/><circle cx="110" cy="228" r="2.5" fill="#9affe6"/><circle cx="130" cy="228" r="2.5" fill="#9affe6"/><circle cx="120" cy="244" r="2.5" fill="#9affe6"/><path d="M101 172 A9 7 0 0 1 119 172 Z" fill="#ff6fb0" stroke="#e04f90" stroke-width="1"/><path d="M121 172 A9 7 0 0 1 139 172 Z" fill="#ff6fb0" stroke="#e04f90" stroke-width="1"/>` },
+  { id: "princess", label: "Princess", icon: "👸", price: 1000, slot: "outfit", z: "front", svg: `<circle cx="88" cy="168" r="10" fill="#ff9ad5"/><circle cx="152" cy="168" r="10" fill="#ff9ad5"/><path d="M92 156 Q120 148 148 156 L170 292 Q120 304 70 292 Z" fill="#ff9ad5" stroke="#e070b0" stroke-width="2"/><path d="M96 158 Q120 152 144 158 L148 182 Q120 190 92 182 Z" fill="#ffd86b"/><circle cx="106" cy="232" r="2.5" fill="#fff"/><circle cx="132" cy="250" r="2.5" fill="#fff"/><circle cx="120" cy="272" r="2.5" fill="#fff"/>` },
+];
+const CATEGORIES = [
+  { slot: "top",    label: "Tops",    icon: "👕" },
+  { slot: "bottom", label: "Bottoms", icon: "👖" },
+  { slot: "head",  label: "Head",  icon: "👑" },
+  { slot: "hair",  label: "Hair",  icon: "🎀" },
+  { slot: "face",  label: "Face",  icon: "🕶️" },
+  { slot: "neck",  label: "Neck",  icon: "📿" },
+  { slot: "back",  label: "Back",  icon: "🦋" },
+  { slot: "hand",  label: "Hands", icon: "🪄" },
+  { slot: "shoes", label: "Shoes", icon: "👟" },
+  { slot: "outfit", label: "Special", icon: "✨" },
+];
+const itemById = (id) => ITEMS.find((i) => i.id === id);
+function slotOf(id) { const it = itemById(id); return it ? it.slot : null; }
+const ALL_ITEM_IDS = ITEMS.map((i) => i.id);
+
+/* Does equipping `a` force `b` off? Same slot, OR either is a full-costume "outfit" — a special
+   costume and individual accessories never mix, so wearing a costume clears EVERYTHING else (and
+   putting on any accessory takes the costume off). */
+function conflicts(a, b) {
+  const sa = slotOf(a), sb = slotOf(b);
+  return sa === sb || sa === "outfit" || sb === "outfit";
+}
+/* Wear an item: take off everything it conflicts with, then put it on. Used by buys, the
+   Collection "Wear", and the auto-equip of a freshly-earned chapter part. */
+function equipItem(id) {
+  for (const other of ALL_ITEM_IDS) {
+    if (other !== id && progress.isEquipped(other) && conflicts(id, other)) progress.setEquipped(other, false);
+  }
+  progress.setEquipped(id, true);
+}
+function toggleItem(id) {   // Collection: take off if worn, else wear (slot-aware)
+  if (progress.isEquipped(id)) progress.setEquipped(id, false);
+  else equipItem(id);
+}
+/* The OWNED collection (earned parts + bought items), in catalog order. */
+function collectionItems() {
+  return ITEMS.filter((it) => progress.isOwned(it.id))
+    .map((it) => ({ id: it.id, label: it.label, icon: it.icon, earned: it.price === 0 }));
+}
+
+/* Build the hero avatar SVG (a STRING), data-driven from ITEMS. `worn(id)` decides what's on.
+   A soft backdrop lifts dark items off the blue (skipped for the tiny list-row icons). Back
+   items (cape/wings/backpack) draw BEHIND the body. */
+function avatarMarkup(worn, backdrop = true) {
   const sk = "#f4c89a", hair = "#6b4226", gray = "#d2d2da", gray2 = "#c4c4cc";
-  els.avatarBox.innerHTML = `
+  const draw = (z) => ITEMS.filter((it) => it.z === z && worn(it.id)).map((it) => it.svg).join("");
+  // a SPECIAL costume (Mermaid/Princess) replaces the body's clothes — HIDE the default shirt,
+  // sleeves, and shorts so the costume sits on bare skin (works in the shop try-on preview too).
+  const outfitOn = ITEMS.some((it) => it.slot === "outfit" && worn(it.id));
+  const shorts = outfitOn ? "" : `<rect x="98" y="224" width="20" height="34" rx="6" fill="${gray2}"/><rect x="122" y="224" width="20" height="34" rx="6" fill="${gray2}"/>`;
+  const shirt = outfitOn ? "" : `<path d="M90 160 Q120 153 150 160 L148 228 Q120 238 92 228 Z" fill="${gray}"/><circle cx="86" cy="170" r="11" fill="${gray}"/><circle cx="154" cy="170" r="11" fill="${gray}"/>`;
+  return `
     <svg viewBox="0 0 240 300" xmlns="http://www.w3.org/2000/svg">
+      ${backdrop ? `<rect x="14" y="8" width="212" height="286" rx="40" fill="#46538f" opacity="0.28"/>` : ""}
+      ${draw("back")}
       <path d="M60 102 Q58 182 92 198 L148 198 Q182 182 180 102 Q180 46 120 46 Q60 46 60 102 Z" fill="${hair}"/>
       <rect x="100" y="226" width="18" height="64" rx="9" fill="${sk}"/>
       <rect x="122" y="226" width="18" height="64" rx="9" fill="${sk}"/>
-      <rect x="98" y="224" width="20" height="34" rx="6" fill="${gray2}"/>
-      <rect x="122" y="224" width="20" height="34" rx="6" fill="${gray2}"/>
+      ${shorts}
       <ellipse cx="106" cy="292" rx="12" ry="8" fill="${sk}"/>
       <ellipse cx="134" cy="292" rx="12" ry="8" fill="${sk}"/>
       <path d="M86 158 Q120 148 154 158 L150 232 Q120 244 90 232 Z" fill="${sk}"/>
@@ -171,9 +316,7 @@ function renderAvatar() {
       <rect x="164" y="162" width="16" height="66" rx="8" fill="${sk}" transform="rotate(-9 172 195)"/>
       <circle cx="62" cy="228" r="10" fill="${sk}"/>
       <circle cx="178" cy="228" r="10" fill="${sk}"/>
-      <path d="M90 160 Q120 153 150 160 L148 228 Q120 238 92 228 Z" fill="${gray}"/>
-      <circle cx="86" cy="170" r="11" fill="${gray}"/>
-      <circle cx="154" cy="170" r="11" fill="${gray}"/>
+      ${shirt}
       <rect x="110" y="146" width="20" height="16" fill="${sk}"/>
       <circle cx="64" cy="104" r="10" fill="${sk}"/>
       <circle cx="176" cy="104" r="10" fill="${sk}"/>
@@ -182,7 +325,173 @@ function renderAvatar() {
       <circle cx="101" cy="109" r="5.5" fill="#3a2e3f"/><circle cx="139" cy="109" r="5.5" fill="#3a2e3f"/>
       <path d="M111 125 Q120 132 129 125" fill="none" stroke="#b5557a" stroke-width="3" stroke-linecap="round"/>
       <path d="M68 102 Q66 50 120 49 Q174 50 172 102 Q150 74 120 78 Q90 74 68 102 Z" fill="${hair}"/>
+      ${draw("front")}
     </svg>`;
+}
+function renderAvatar(box = els.avatarBox, preview = null) {
+  const worn = (id) => preview ? preview.has(id) : progress.isEquipped(id);
+  box.innerHTML = avatarMarkup(worn, true);
+}
+/* A mini avatar wearing ONLY this item — the honest "graphic" for shop/collection rows (no
+   misleading emoji; she sees exactly what she's buying / wearing). */
+function itemIcon(id) { return avatarMarkup((x) => x === id, false); }
+
+/* dev: the DESIGN PROTOTYPE page (?design) — every item shown on a full avatar in a labeled
+   grid, grouped by category, plus a few COMBOS to check z-order / overlap. The staging area to
+   eyeball and tune new items (edit their coords in ITEMS) BEFORE they go live in the shop. */
+function renderDesignPage() {
+  const card = (worn, label) =>
+    `<div class="design-card"><div class="design-av">${avatarMarkup(worn, false)}</div><span class="design-lbl">${label}</span></div>`;
+  let html = `<h1 class="design-title">🎨 Design Prototype</h1>` +
+    `<p class="design-sub">Every item on the avatar. Tune coordinates in the ITEMS catalog, then it's live.</p>`;
+  for (const cat of CATEGORIES) {
+    const items = ITEMS.filter((it) => it.slot === cat.slot);
+    if (!items.length) continue;
+    html += `<h2 class="design-cat">${cat.icon} ${cat.label}</h2><div class="design-grid">` +
+      items.map((it) => card((x) => x === it.id, `${it.label} · ${it.price ? "🪙" + it.price : "earned"}`)).join("") +
+      `</div>`;
+  }
+  const combos = [
+    { ids: ["redtee", "blueshorts", "sneakers"], label: "Tee + Shorts + Sneakers" },
+    { ids: ["startee", "pinkskirt", "chapter-3", "necklace"], label: "Tee + Skirt + Crown + Necklace" },
+    { ids: ["chapter-1", "chapter-2", "chapter-3", "chapter-4"], label: "All earned parts" },
+    { ids: ["violettee", "tutu", "bow", "sunglasses", "boots"], label: "Layered look" },
+    { ids: ["mermaid"], label: "Mermaid costume" },
+    { ids: ["princess"], label: "Princess costume" },
+  ];
+  html += `<h2 class="design-cat">🧩 Combos (z-order & overlap checks)</h2><div class="design-grid">` +
+    combos.map((c) => { const s = new Set(c.ids); return card((x) => s.has(x), c.label); }).join("") +
+    `</div>`;
+  $("app").innerHTML = `<div class="design-page">${html}</div>`;
+}
+
+/* ===== SHOP + COLLECTION UI (the catalog, slots, and equip helpers are defined above) =====
+   The SHOP shows only BUYABLE items (not yet owned), one CATEGORY tab at a time; tap an item to
+   try it on, then Buy. The COLLECTION manages what's WORN (earned + bought), also by category;
+   what's worn there is exactly what shows on the homepage. ---- */
+
+// the 7 category tabs, active one highlighted
+function renderTabs(container, activeSlot) {
+  container.innerHTML = CATEGORIES.map((c) =>
+    `<button class="cat-tab ${c.slot === activeSlot ? "on" : ""}" data-slot="${c.slot}">` +
+    `${c.icon}<span>${c.label}</span></button>`
+  ).join("");
+}
+
+/* ===== SHOP — try on, then buy (one category at a time) ===== */
+let shopTab = CATEGORIES[0].slot;
+let shopTryOn = null;   // the ONE item currently tried-on (not yet bought)
+
+function openShop() { sfx.unlock(); shopTryOn = null; renderShop(); els.shopPanel.hidden = false; }
+function closeShop() { shopTryOn = null; els.shopPanel.hidden = true; }
+
+function renderShop() {
+  renderTabs(els.shopTabs, shopTab);
+  const coins = progress.getCoins();
+  els.shopCoins.textContent = coins;
+  // preview = what she'd look like if she equipped the tried-on item — slot-aware, so the
+  // try-on REPLACES anything in the same slot instead of overlapping it.
+  const preview = new Set(ALL_ITEM_IDS.filter((id) => progress.isEquipped(id)));
+  if (shopTryOn) {
+    for (const id of [...preview]) if (id !== shopTryOn && conflicts(shopTryOn, id)) preview.delete(id);
+    preview.add(shopTryOn);
+  }
+  renderAvatar(els.shopAvatar, preview);
+  // Buy bar: ALWAYS visible (keeps the layout steady). No selection → a disabled prompt;
+  // an item tried on → Buy (affordable) or Need (not).
+  const t = shopTryOn ? itemById(shopTryOn) : null;
+  els.shopBuy.hidden = false;
+  if (t && !progress.isOwned(t.id)) {
+    const afford = coins >= t.price;
+    els.shopBuy.disabled = !afford;
+    els.shopBuy.textContent = afford ? `Buy ${t.icon} ${t.label} · 🪙${t.price}` : `Need 🪙${t.price}`;
+  } else {
+    els.shopBuy.disabled = true;
+    els.shopBuy.textContent = "Tap an item to try it on";
+  }
+  // only BUYABLE items in this category (owned/earned ones live in the Collection)
+  const list = ITEMS.filter((it) => it.slot === shopTab && it.price > 0 && !progress.isOwned(it.id));
+  els.shopItems.innerHTML = list.length
+    ? list.map((it) => {
+        const trying = shopTryOn === it.id;
+        const state = (trying ? "trying " : "") + (coins >= it.price ? "buyable" : "tooexp");
+        return `<button class="shop-item ${state}" data-id="${it.id}">` +
+          `<span class="shop-ic">${itemIcon(it.id)}</span>` +
+          `<span class="shop-nm">${it.label}<span class="shop-pr">🪙 ${it.price}</span></span>` +
+          `<span class="shop-act">${trying ? "Trying on" : "Try on"}</span>` +
+          `</button>`;
+      }).join("")
+    : `<p class="coll-empty">You have everything here! ✨ Check back soon for new items.</p>`;
+}
+function onShopTabClick(e) {
+  const tab = e.target.closest(".cat-tab");
+  if (!tab) return;
+  shopTab = tab.dataset.slot;
+  shopTryOn = null;
+  sfx.tap();
+  renderShop();
+}
+function onShopItemClick(e) {
+  const row = e.target.closest(".shop-item");
+  if (!row) return;
+  shopTryOn = (shopTryOn === row.dataset.id ? null : row.dataset.id);   // toggle the single try-on
+  sfx.tap();
+  renderShop();
+}
+function onShopBuy() {
+  if (!shopTryOn) return;
+  const item = itemById(shopTryOn);
+  if (!progress.purchase(item.id, item.price).ok) return;
+  equipItem(item.id);     // auto-wear (slot-aware)
+  shopTryOn = null;
+  sfx.fanfare();
+  renderShop();           // bought item drops out of the buyable list
+  renderAvatar();         // homepage avatar
+  renderJar();            // coins changed
+}
+
+/* ===== COLLECTION — manage what's worn (earned + bought), one category at a time ===== */
+let collTab = CATEGORIES[0].slot;
+
+function openCollection() { sfx.unlock(); renderCollection(); els.collPanel.hidden = false; }
+function closeCollection() { els.collPanel.hidden = true; }
+
+function renderCollection() {
+  renderTabs(els.collTabs, collTab);
+  renderAvatar(els.collAvatar);   // shows exactly what's worn
+  const list = collectionItems().filter((it) => slotOf(it.id) === collTab);
+  els.collItems.innerHTML = list.length
+    ? list.map((it) => {
+        const worn = progress.isEquipped(it.id);
+        return `<button class="shop-item ${worn ? "worn" : ""}" data-id="${it.id}">` +
+          `<span class="shop-ic">${itemIcon(it.id)}</span>` +
+          `<span class="shop-nm">${it.label}<span class="shop-pr">${it.earned ? "⭐ earned" : "🛍️ bought"}</span></span>` +
+          `<span class="shop-act">${worn ? "Take off" : "Wear"}</span>` +
+          `</button>`;
+      }).join("")
+    : `<p class="coll-empty">Nothing here yet — try the 🛍️ Shop or master a chapter!</p>`;
+}
+function onCollTabClick(e) {
+  const tab = e.target.closest(".cat-tab");
+  if (!tab) return;
+  collTab = tab.dataset.slot;
+  sfx.tap();
+  renderCollection();
+}
+function onCollectionClick(e) {
+  const row = e.target.closest(".shop-item");
+  if (!row) return;
+  toggleItem(row.dataset.id);
+  sfx.tap();
+  renderCollection();
+  renderAvatar();   // homepage reflects the change
+}
+/* Take EVERYTHING off — back to the bare default shirt + shorts. */
+function onRemoveAll() {
+  for (const id of ALL_ITEM_IDS) progress.setEquipped(id, false);
+  sfx.tap();
+  renderCollection();
+  renderAvatar();
 }
 
 /* ---- hidden parent report: long-press the logo ~2s (no address bar in the
@@ -224,9 +533,10 @@ function startRound(s) {
   sfx.unlock();
 
   const len = curriculum.roundLength(skill.id);     // per-skill round length (5 / 7 / 10)
-  const cycle = progress.getCycle();
-  // generate(cycle) is the E/M/H ESCALATOR HOOK — generators ignore the arg today, so
-  // passing it is harmless now and avoids a retrofit when difficulty scaling lands.
+  // The escalator level = the Season, AFTER any parent cap (effectiveCycle). Inert until a
+  // parent caps this skill from the panel; then this one skill escalates slower (e.g. addfacts
+  // held at L2 if the teen jump is too hard) without touching the others.
+  const cycle = progress.effectiveCycle(skill.id, progress.getCycle());
   const problems = Array.from({ length: len }, () => skill.generate(cycle));
   const hist = progress.getAll().times[skill.id] || [];
   session = {
@@ -588,6 +898,14 @@ function finishSession() {
   const summary = progress.finishRound({
     skillId: skill.id, cleanFlags: session.cleanFlags, roundId: session.roundId,
   });
+  // CHAPTER payoff: a chapter completes ON the round that masters its LAST skill. Check + grant
+  // BEFORE advanceIfComplete() below — that wipes the cleared flags on a Season rollover, which
+  // would make Ch4's completion read false afterwards. grantChapterPart is idempotent, so
+  // `.granted` is true only the FIRST time the chapter finished → drives the avatar-part reveal.
+  const ch = curriculum.chapterFor(skill.id);
+  const chapterDone = (ch && curriculum.chapterComplete(ch.id) && progress.grantChapterPart(ch.id).granted)
+    ? ch : null;
+  if (chapterDone) equipItem(`chapter-${chapterDone.id}`);   // auto-wear the earned part (slot-aware)
   const daily = progress.claimDailyReturn(localDayKey());   // +3 on the first completed round of a new day
   // advanceIfComplete returns the NEW cycle number iff that mastery just completed the whole Season.
   const newCycle = summary.newlyMastered ? curriculum.advanceIfComplete() : null;
@@ -597,6 +915,7 @@ function finishSession() {
   els.rewardStars.textContent = "⭐".repeat(correct) + "☆".repeat(session.len - correct);
   els.rewardTitle.textContent =
     seasonDone ? `Season ${seasonDone} complete! 🎉🏆`
+    : chapterDone ? `${chapterDone.title} complete! 🏅`
     : summary.newlyMastered ? "Skill unlocked! 🏆"
     : (correct === session.len ? "Perfect! 🎉" : "You did it! 🎉");
 
@@ -607,6 +926,8 @@ function finishSession() {
   // Season-complete reframes the upcoming board reset as a fresh chapter, not erased trophies.
   els.rewardSpeed.textContent = seasonDone
     ? "You finished the whole board! A fresh Season begins. 🌟"
+    : chapterDone
+    ? `You earned the ${chapterDone.part}! ${chapterDone.icon}`
     : speedLine();
 
   showScreen("reward");
@@ -619,6 +940,7 @@ function finishSession() {
   }
   speech.speak(
     seasonDone ? `Wow! You finished Season ${seasonDone}! A whole new Season is ready for you.`
+      : chapterDone ? `Chapter complete! You earned the ${chapterDone.part}.`
       : summary.newlyMastered ? "You unlocked a new skill! Amazing."
       : (correct === session.len ? "Perfect round! You are a number hero." : "Great job!")
   );
@@ -670,12 +992,31 @@ bindLongPress(els.logo, 2000, openPanel);
 els.panelUnlock.addEventListener("click", parentUnlock);
 els.panelClose.addEventListener("click", closePanel);
 
+// shop: open from the board, tap items to try on, Buy commits, close
+els.shopBtn.addEventListener("click", openShop);
+els.shopClose.addEventListener("click", closeShop);
+els.shopTabs.addEventListener("click", onShopTabClick);
+els.shopItems.addEventListener("click", onShopItemClick);
+els.shopBuy.addEventListener("click", onShopBuy);
+// collection: open from the board, tap a category tab, tap items to wear / take off, close
+els.collBtn.addEventListener("click", openCollection);
+els.collClose.addEventListener("click", closeCollection);
+els.collTabs.addEventListener("click", onCollTabClick);
+els.collItems.addEventListener("click", onCollectionClick);
+els.collRemove.addEventListener("click", onRemoveAll);
+// play screen: a Home button back to the board (abandons the in-progress round; nothing is
+// committed until a round finishes, so this just discards it — consistent with no mid-round resume)
+els.playHome.addEventListener("click", () => { speech.stop(); showBoard(); });   // cut any in-progress cue
+
 // best-effort: ask the browser to keep our storage so a week-dark Safari TAB doesn't
 // evict coins/avatar/Seasons (the installed PWA icon is exempt, but this is free insurance).
 progress.requestPersistentStorage();
 
 const params = new URLSearchParams(location.search);
 if (params.has("debug")) runSelfTest();                    // self-test is pure; safe on a real device
+// dev: ?season=N jumps to Season N to preview escalated difficulty (escalator + teen ramp)
+const seasonN = +(params.get("season") || 0);
+if (seasonN > 0) progress.devSetCycle(seasonN);
 // dev: ?seed=N pre-clears the first N spine skills (for screenshots of a mid-Season board)
 const seedN = +(params.get("seed") || 0);
 if (seedN > 0) {
@@ -685,9 +1026,18 @@ if (seedN > 0) {
     progress.finishRound({ skillId: id, cleanFlags: flags });
   }
 }
+// dev: ?parts=N grants chapter avatar parts 1..N, to eyeball the earned hero (clip/cape/
+// crown/wand) without grinding through the chapters first
+const partsN = +(params.get("parts") || 0);
+for (let n = 1; n <= partsN; n++) { progress.grantChapterPart(n); equipItem(`chapter-${n}`); }
+// dev: ?coins=N grants coins (for shop testing without earning them through play)
+const coinsN = +(params.get("coins") || 0);
+if (coinsN > 0) progress.addCoins(coinsN);
 // dev: ?skill=<id> jumps straight into that skill's round (audio unlocks on the first tap)
+// dev: ?design opens the Design Prototype page (every item on the avatar) instead of the board
 const previewId = params.get("skill");
-if (previewId && SKILLS[previewId]) startRound(SKILLS[previewId]);
+if (params.has("design")) renderDesignPage();
+else if (previewId && SKILLS[previewId]) startRound(SKILLS[previewId]);
 else showBoard();
 
 /* ---- PWA: register the service worker for offline + installability.

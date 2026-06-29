@@ -1,8 +1,12 @@
 # Math Hero
 
-A small, friendly **math-practice web app** that teaches early addition as
+A small, friendly **math-practice web app** that teaches early math as
 *visible patterns* — the math lives on the screen (a 50-chart, ten-frames,
-number bonds) instead of in your head.
+number bonds) instead of in your head. It's a **Practice Board**: a board of
+skill tiles you unlock by mastering them, grouped into chapters across "Worlds,"
+with the difficulty climbing each "Season." Mastering skills assembles a hero
+avatar, and the coins you earn buy outfits in a dress-up shop. **Addition and
+subtraction are live; multiplication and division are on the way.**
 
 Built as an installable **PWA**: it works offline and adds to your home screen
 like a native app.
@@ -22,8 +26,12 @@ python -m http.server 8080
 # then open http://localhost:8080
 ```
 
-- `http://localhost:8080/?debug` runs the generator self-test (check the console).
-- `http://localhost:8080/?skill=<id>` previews any single skill.
+Dev hooks (append to the URL):
+
+- `?debug` runs the generator self-test (check the console).
+- `?skill=<id>` previews any single skill round.
+- `?season=N` previews a skill at a harder Season (the difficulty escalator).
+- `?design` shows every avatar / shop item on one grid.
 
 ## Deploy
 
@@ -35,12 +43,13 @@ installing on an iPad.
 ```
 index.html            app shell (three screens)
 styles.css            big touch targets, high contrast, reduce-motion gated
-js/app.js             the engine: state machine + session loop
+js/app.js             the engine: board + round state machine
 js/skills.js          skill definitions + problem generators (+ self-test)
+js/curriculum.js      the skill spine + the bounded-picker mastery gate
 js/visuals.js         SVG renderers (50-chart, ten-frame, number bond, …)
 js/speech.js          speech-synthesis wrapper
 js/sfx.js             Web Audio sound effects
-js/progress.js        localStorage persistence
+js/progress.js        coins, mastery record, Season state (localStorage)
 manifest.webmanifest  PWA manifest
 service-worker.js     offline caching (bump CACHE_VERSION when you ship)
 icons/                app icons

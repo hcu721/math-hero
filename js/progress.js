@@ -80,9 +80,15 @@ const blank = () => ({
   schema: SCHEMA,
   /* ---- v2: Practice Board ---- */
   coins: 0,
-  cycle: 1,                 // the "Season" counter (starts at 1)
+  cycle: 1,                 // the active World's "Season" counter (starts at 1)
+  world: 1,                 // active World: 1 = additive (+/−). World 2 (×/÷) is a later content drop.
+  worldCycles: {},          // RESERVED: per-World Season counters for INACTIVE worlds (empty until World 2;
+                            //   `cycle` IS the active World's Season — this just parks the others later).
+  parentLevelCap: {},       // RESERVED parent hatch: { skillId: maxLevel } caps a skill's escalation; applied
+                            //   by effectiveCycle() (e.g. cap addfacts back to L2 if the teen jump is too hard).
   avatar: defaultAvatar(),  // currently equipped look
-  owned: {},                // { itemId: true } — bought inventory (empty until the Phase-B shop)
+  owned: {},                // { itemId: true } — earned chapter parts (chapter-N) + bought shop accessories
+  equipped: {},             // { itemId: true } — shop accessories currently WORN (subset of owned)
   skills: {},               // LIFETIME record: { id: {attempts, firstTry, recent:[1,0,…cap20], bestRound, masteryAcc?} }
   cycleRounds: {},          // rounds completed THIS cycle per skill (reset each Season)
   cycleMastered: {},        // skills cleared THIS cycle (doubles as the once-per-cycle jackpot guard)
@@ -122,6 +128,9 @@ function load() {
         cycleMastered: obj(parsed.cycleMastered),
         cycleBest: obj(parsed.cycleBest),
         owned: obj(parsed.owned),
+        equipped: obj(parsed.equipped),
+        worldCycles: obj(parsed.worldCycles),
+        parentLevelCap: obj(parsed.parentLevelCap),
         times: obj(parsed.times),
         seenSkills: obj(parsed.seenSkills),
         missLog: arr(parsed.missLog),
@@ -149,6 +158,43 @@ export function getSkill(id) { return load().skills[id] || { attempts: 0, firstT
 export function getCycleRounds(id) { return load().cycleRounds[id] || 0; }
 export function isClearedThisCycle(id) { return !!load().cycleMastered[id]; }
 export function getAvatar() { return load().avatar; }
+export function getWorld() { return load().world; }
+
+/* ---- the escalator's PARENT HATCH ------------------------------------------------------
+   effectiveCycle() is the level a skill ACTUALLY escalates at, after applying any parent
+   cap. With no cap set it returns the Season (cycle) unchanged, so it's INERT until a parent
+   caps a skill (e.g. addfacts back to L2 if the teen jump at L3 is too hard). The single
+   escalator call site (app.js) passes the result into the skill's generate(cycle). */
+export function effectiveCycle(skillId, cycle) {
+  const cap = load().parentLevelCap[skillId];
+  return (cap != null) ? Math.min(cycle, cap) : cycle;
+}
+export function setParentLevelCap(skillId, level) {
+  const s = load();
+  if (level == null) delete s.parentLevelCap[skillId];   // null/undefined clears the cap
+  else s.parentLevelCap[skillId] = level;
+  save(s);
+}
+export function getParentLevelCap(skillId) {
+  const cap = load().parentLevelCap[skillId];
+  return cap == null ? null : cap;
+}
+
+/* ---- chapter avatar-PART grant ---------------------------------------------------------
+   The EARNED (mastery) avatar assembles one piece per completed CHAPTER. Idempotent via
+   `owned` — a reload/replay, or re-clearing the chapter in a later Season, won't re-grant or
+   double-celebrate; the piece persists across Seasons like the rest of the avatar + coins.
+   app.js calls this after a round when curriculum.chapterComplete(id) flips true. What the
+   piece looks like on the avatar is the renderer's business (see the board wiring). */
+export function grantChapterPart(chapterId) {
+  const s = load();
+  const part = `chapter-${chapterId}`;
+  if (s.owned[part]) return { granted: false, part };    // already earned — no-op, no re-celebration
+  s.owned[part] = true;
+  save(s);
+  return { granted: true, part };
+}
+export function hasChapterPart(chapterId) { return !!load().owned[`chapter-${chapterId}`]; }
 
 /* first-try accuracy over the rolling window (0..1) — the number the gate and
    the parent panel both read. */
@@ -282,10 +328,59 @@ export function forceClearThisCycle(skillId) {
    available for a future guarded parent "reset" action. DESTRUCTIVE. */
 export function wipe() { save(blank()); }
 
-/* ---- avatar (shape reserved now; the shop that fills `owned` is Phase B) ---- */
+/* DEV ONLY (?season=N): jump to Season N to preview escalated difficulty (the escalator +
+   addfacts/subfacts teen ramp). Resets the per-cycle progress so the board shows a fresh
+   Season N; coins / avatar / lifetime records persist. */
+export function devSetCycle(n) {
+  const s = load();
+  s.cycle = Math.max(1, n | 0);
+  s.cycleRounds = {};
+  s.cycleMastered = {};
+  s.cycleBest = {};
+  for (const id in s.skills) if (s.skills[id]) { s.skills[id].recent = []; s.skills[id].masteryAcc = null; }
+  save(s);
+}
+
+/* ---- avatar slots (the older slot-based look; the live shop uses the accessories below) ---- */
 export function equip(slot, value) { const s = load(); s.avatar[slot] = value; save(s); return s.avatar; }
 export function buy(itemId) { const s = load(); s.owned[itemId] = true; save(s); }
 export function isOwned(itemId) { return !!load().owned[itemId]; }
+
+/* ---- the SHOP: spend coins on cosmetic accessories (the two-currency garnish). COINS buy
+   re-skins; MASTERY earns the chapter parts — kept separate. purchase() is the ONLY place
+   coins are spent: it checks the balance, deducts, and marks owned, all in one write. ---- */
+export function purchase(itemId, price) {
+  const s = load();
+  if (s.owned[itemId]) return { ok: false, reason: "owned", totalCoins: s.coins };
+  if (s.coins < price) return { ok: false, reason: "poor", totalCoins: s.coins };
+  s.coins -= price;
+  s.owned[itemId] = true;
+  save(s);
+  return { ok: true, totalCoins: s.coins };
+}
+/* Wear / take off an OWNED accessory (no-op if not owned). Accessories are independent
+   toggles, so several can be worn at once. */
+export function toggleEquip(itemId) {
+  const s = load();
+  if (!s.owned[itemId]) return false;
+  s.equipped[itemId] = !s.equipped[itemId];
+  save(s);
+  return !!s.equipped[itemId];
+}
+export function isEquipped(itemId) { return !!load().equipped[itemId]; }
+/* Explicit wear/remove (the slot-aware equip in app.js uses this to clear a slot then set one
+   item). Removing always works; wearing requires the item to be owned. */
+export function setEquipped(itemId, on) {
+  const s = load();
+  if (on) { if (!s.owned[itemId]) return false; s.equipped[itemId] = true; }
+  else { delete s.equipped[itemId]; }
+  save(s);
+  return !!on;
+}
+
+/* Add coins directly (used by the ?coins=N dev hook for shop testing; also handy for a
+   future parent "reward" action). The faucet in finishRound is the normal earn path. */
+export function addCoins(n) { const s = load(); s.coins += n; save(s); return s.coins; }
 
 /* Best-effort: ask the browser to keep our storage so iOS is less likely to
    evict it (which would wipe mastery). Safe to call once at startup. */
